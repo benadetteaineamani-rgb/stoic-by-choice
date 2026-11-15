@@ -356,3 +356,6 @@ details.fold:not(.card) > summary { font-size: .9rem; }
 .moonbtn { border-color: #2E2860; } .moonbtn.plus { background: linear-gradient(180deg, #C9BFFF, #6B5BD6); color: #0E0A24; }
 .sleepbar { background: linear-gradient(180deg, #8A7FB8, #4A3F80) !important; } .sleepbar.ok { background: linear-gradient(180deg, #C9BFFF, #6B5BD6) !important; }
 .seg.big button { font-size: .72rem; padding: 9px 2px; }
+.whogrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 10px; }
+.whopick { border: 1.5px solid var(--line); background: #0F0C08; color: var(--ink); border-radius: 16px; padding: 12px 4px; display: grid; justify-items: center; gap: 6px; font: inherit; cursor: pointer; }
+.whopick.on { border-color: var(--gold); background: #2A2008; box-shadow: 0 0 14px rgba(242,177,52,.4); }

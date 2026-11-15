@@ -2,54 +2,26 @@
 
 A secure, shared challenge app for the crew: registration with email verification, a 4 digit PIN on recognised devices, symbolic avatars, daily activities, weekly, monthly and overall leaderboards, awards, and an Admin Control Centre. It runs entirely on Netlify (free plan) using Netlify Functions and Netlify Blobs.
 
-## 1. One time setup (about 20 minutes)
-
-### a) Create a Gmail app password (sends the 6 digit codes)
-1. Use a Gmail account for the challenge (your own, or a new one such as stoicbychoice.challenge@gmail.com).
-2. Go to myaccount.google.com → **Security** → turn on **2 Step Verification**.
-3. Search for **App passwords**, create one called `Stoic by Choice`, and copy the 16 character password.
-
-### b) Put the code on GitHub and Netlify
-1. Create a GitHub repository and upload everything in this folder (`public`, `netlify`, `netlify.toml`, `package.json`, `README.md`).
-2. In Netlify: **Add new site → Import an existing project → GitHub** → choose the repository → **Deploy**.
-   (Netlify's drag and drop upload will not work: it does not run the secure functions.)
-
-### c) Add the environment variables
-Netlify → **Site configuration → Environment variables → Add a variable**:
-
-| Key | Value |
-|---|---|
-| `SESSION_SECRET` | A long random sentence of at least 40 characters that nobody can guess. Never share it. |
-| `ADMIN_EMAIL` | The administrator's email address (several can be separated with commas) |
-| `SMTP_USER` | The Gmail address from step a |
-| `SMTP_PASS` | The 16 character app password from step a |
-| `SMTP_HOST` and `SMTP_PORT` | Only if your email is not Google (Gmail or Google Workspace). Ask your email host for its SMTP server and port (465 or 587). |
-
-Then **Deploys → Trigger deploy → Deploy site** so the new settings take effect.
-
-### d) Sign up as administrator first
-Open the site and **Create my account** with the `ADMIN_EMAIL` address and your name. You are approved automatically and linked to your pre loaded record (Benadette). Then share the link with the crew.
+## 1. One time setup
+1. Upload this folder to a private GitHub repository and import it into Netlify (Add new project → Import an existing project → GitHub).
+2. In Netlify → Project configuration → Environment variables, add **`SESSION_SECRET`**: a long random text (40+ characters), marked as secret, scoped to Functions. No email settings are needed.
+3. Deploys → Trigger deploy → Deploy project without cache.
+4. Open the site and **join first**: the first person to join becomes the administrator. Start your name with "Benadette" to be linked to the pre loaded record.
 
 ## 2. How participants join
-1. **Sign up**: name, email, optional mobile.
-2. **Choose an avatar**: "Who are you choosing to become?" (12 symbolic avatars; the pledge is shown).
-3. **Accept** the challenge rules, the privacy policy and the POPIA consent for wellness data.
-4. **Verify** with the 6 digit email code and **create a PIN**.
-5. Wait for approval: in **Admin → Participants**, approve each person and link them to their pre loaded record (Thandi, Kgotso, Judith, Patrick, Thabo).
-
-Next time they open the app on the same phone they only need their PIN. A new phone needs an email code once. Forgotten PIN: **Forgot my PIN** sends an email code.
+1. Tap **I'm new: join the challenge**.
+2. Name (and optional mobile), choose an avatar ("Who are you choosing to become?"), accept the rules, privacy policy and POPIA consent, and create a 4 digit PIN.
+3. The administrator approves them in **Admin → Participants** and links them to their pre loaded record.
+4. Next time: tap your avatar and type your PIN.
 
 ## 3. Security and privacy
-* PINs are stored only as salted scrypt hashes, never as plain numbers. Easy PINs (1234, 0000…) are refused.
-* 5 wrong PINs lock the account for 15 minutes; 10 wrong PINs require an email reset (adjustable in Admin → Settings).
-* Email codes expire after 10 minutes, allow 5 tries, and sending is rate limited per email and per network.
-* The PIN only works on a device that was verified by email. Signing out or resetting the PIN removes devices.
-* Administrators need their PIN **and** a fresh email code every time they sign in (two factor).
-* Points are calculated on the server from `public/core.js`; nobody can enter their own points. Admin adjustments need a reason and are logged.
-* Weights and wellness details are visible only to the person and the administrator. Others see names, avatars, points, streaks and badges.
-* Every admin action, sign in, PIN lock and view of health data is written to the audit log (Admin → Audit log), in line with POPIA accountability.
-* Journal entries are private even from administrators: the server only shares the dates they were written.
-* Participants can ask the administrator to delete their account and data (Admin → Participants → Delete).
+* PINs are stored only as salted scrypt hashes. Easy PINs (1234, 0000…) are refused.
+* 5 wrong PINs lock the account for 15 minutes (adjustable). Forgotten PIN: the administrator uses **Reset PIN**.
+* Points are calculated on the server from `public/core.js`; nobody can enter their own points.
+* Weights are visible only to the person and the administrator. Journal entries are visible only to the person.
+* Every admin action, sign in, PIN lock and view of health data is written to the audit log, in line with POPIA accountability.
+* Participants can ask the administrator to delete their account and data.
+* Note: a 4 digit PIN is convenient rather than bank grade security. Keep the site link within the crew.
 
 ## 4. Admin Control Centre
 | Section | What it does |

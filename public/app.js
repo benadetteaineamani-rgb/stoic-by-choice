@@ -74,7 +74,7 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
     set: (k, v) => { try { if (v === null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch {} },
   };
   const state = {
-    session: store.get("sbc_session", null), deviceToken: store.get("sbc_device", null), account: null, pending: false,
+    session: store.get("sbc_session", null), account: null, pending: false,
     me: null, tab: "today", date: todaySA(), online: false, lastSync: null, busy: false, tipShift: 0, quoteShift: 0,
     calc: { kg: null, deficit: 500 }, settings: null, config: null, participants: [], summaries: {}, results: null,
     myRecord: null, challenges: [], manualAwards: [], announcements: [], aggregates: null, admin: null, adminTab: "dashboard",
@@ -229,7 +229,7 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
         <button class="btn ghost full" data-m="avatar">🎭 Change my avatar</button>
         <button class="btn ghost full" data-m="pin">🔢 Change my PIN</button>
         <button class="btn ghost full" data-m="rules">📜 Challenge rules and privacy policy</button>
-        <button class="btn ghost full" data-m="signout">🚪 Sign out of this device</button>
+        <button class="btn ghost full" data-m="signout">🚪 Sign out</button>
         <button class="btn full" data-m="close">Close</button>
       </div>`);
     $$("[data-m]", m).forEach((b) => b.addEventListener("click", () => {
@@ -284,46 +284,43 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
       <h2 style="margin-top:14px">🔒 Privacy policy (POPIA)</h2><div class="prose">${esc(p.privacyText || DEFAULT_CONFIG.privacyText).replace(/\n/g, "<br>")}</div>
       <button class="btn full" style="margin-top:12px" onclick="document.getElementById('modal').classList.add('hidden')">Close</button>`);
   }
-  async function signOut() {
-    closeModal();
-    try { await api("auth/signout", { method: "POST", body: { deviceToken: state.deviceToken } }); } catch {}
-    state.deviceToken = null; store.set("sbc_device", null);
-    signedOut("You are signed out of this device.");
-  }
+  function signOut() { closeModal(); people = null; signedOut("You are signed out."); }
 
-  // ---------- Sign up and sign in ----------
+  // ---------- Join and sign in (name, avatar and PIN) ----------
   let pub = null;
   async function getPublic() { if (!pub) pub = await api("public").catch(() => ({ rulesText: DEFAULT_CONFIG.rulesText, privacyText: DEFAULT_CONFIG.privacyText })); return pub; }
-  const reg = { name: "", email: "", mobile: "", avatar: null, consent: { rules: false, privacy: false, health: false } };
-  const deviceLabel = () => { const u = navigator.userAgent; return /iPhone|iPad/.test(u) ? "iPhone or iPad" : /Android/.test(u) ? "Android phone" : /Mac/.test(u) ? "Mac" : /Windows/.test(u) ? "Windows computer" : "Device"; };
+  const reg = { name: "", mobile: "", avatar: null, consent: { rules: false, privacy: false, health: false } };
+  let people = null, pickedPerson = null;
+  async function loadPeople() { try { const r = await api("auth/people"); people = r; } catch { people = { people: [], hasAdmin: true }; } render(); }
   const pinInput = (id, label, ac = "new-password") => `<label>${label}<input class="pin" type="password" inputmode="numeric" maxlength="4" pattern="\\d{4}" id="${id}" required autocomplete="${ac}" placeholder="••••"></label>`;
-  const codeInput = (id = "code") => `<label>6 digit code from your email<input class="pin code" type="text" inputmode="numeric" maxlength="6" pattern="\\d{6}" id="${id}" required autocomplete="one-time-code" placeholder="••••••"></label>`;
-  const steps = (n) => `<div class="steps">${["Details", "Avatar", "Rules", "Verify & PIN"].map((s, i) => `<span class="${i + 1 <= n ? "on" : ""}">${i + 1}. ${s}</span>`).join("")}</div>`;
+  const steps = (n) => `<div class="steps">${["Name", "Avatar", "Rules", "PIN"].map((s, i) => `<span class="${i + 1 <= n ? "on" : ""}">${i + 1}. ${s}</span>`).join("")}</div>`;
   const authShell = (inner) => `<section class="card auth"><div class="auth-hero"><img src="img/avatars/climber.webp" alt="" class="hero-av"><div><div class="brand">Stoic by Choice</div><div class="brand-sub">Biggest Loser Challenge</div></div></div>${inner}</section>`;
   function finishAuth(res, msg) {
-    if (res.deviceToken) { state.deviceToken = res.deviceToken; store.set("sbc_device", res.deviceToken); }
     state.session = res.session; store.set("sbc_session", res.session);
-    state.authStep = null; state.tab = "today";
+    state.authStep = null; state.tab = "today"; pickedPerson = null;
     load(true).then(() => msg && toast(msg, 5000));
   }
 
   function viewAuth() {
-    const st = state.authStep || (state.deviceToken ? "pin" : "welcome");
-    if (st === "welcome") return authShell(`
-      <h2 class="center">Choose your challenge avatar</h2>
-      <div class="avstrip">${Object.keys(AVATARS).map((k) => avatarImg(k, "md")).join("")}</div>
-      <p class="center muted">Small, consistent choices create big change.</p>
-      <button class="btn full" data-step="reg1">Create my account</button>
-      <button class="btn ghost full" style="margin-top:10px" data-step="dev1">I already have an account</button>
-      <p class="note center" style="margin-top:12px"><a href="#" data-rules>Challenge rules and privacy policy</a></p>`);
+    const st = state.authStep || "welcome";
+    if (st === "welcome") {
+      if (!people) { loadPeople(); return authShell(`<p class="center muted">Loading…</p>`); }
+      const list = people.people;
+      if (!list.length) return authShell(`<h2 class="center">Welcome!</h2><p class="center">Be the first to join. The first person to join becomes the challenge administrator.</p>
+        <button class="btn full" data-step="reg1">Join the challenge</button>`);
+      return authShell(`<h2 class="center">Who are you?</h2>
+        <div class="whogrid">${list.map((p) => `<button class="whopick ${pickedPerson === p.id ? "on" : ""}" data-person="${p.id}">${avatarImg(p.avatar, "xl")}<b>${esc(p.name)}</b></button>`).join("")}</div>
+        ${pickedPerson ? `<form class="form" id="pinForm" style="margin-top:14px">${pinInput("pin", "Your PIN", "current-password")}<button class="btn full">Open</button></form>
+          <p class="note center">Forgot your PIN? Ask the administrator to reset it.</p>` : ""}
+        <button class="btn ghost full" style="margin-top:12px" data-step="reg1">I'm new: join the challenge</button>
+        <p class="note center" style="margin-top:10px"><a href="#" data-rules>Challenge rules and privacy policy</a></p>`);
+    }
     if (st === "reg1") return authShell(`${steps(1)}
-      <form class="form" id="reg1"><label>Full name<input id="rName" value="${esc(reg.name)}" required maxlength="40" autocomplete="name"></label>
-      <label>Email address<input id="rEmail" type="email" value="${esc(reg.email)}" required autocomplete="email"></label>
+      <form class="form" id="reg1"><label>Your name<input id="rName" value="${esc(reg.name)}" required maxlength="40" autocomplete="name" placeholder="e.g. Thandi Kgosana"></label>
       <label>Mobile number (optional)<input id="rMobile" type="tel" value="${esc(reg.mobile)}" maxlength="20" autocomplete="tel" placeholder="e.g. 082 123 4567"></label>
-      <p class="note">We send a code to your email to confirm it is yours. Your mobile number is only used by the administrator to contact you.</p>
       <div class="row"><button type="button" class="btn ghost" data-step="welcome">Back</button><button class="btn">Next</button></div></form>`);
     if (st === "reg2") return authShell(`${steps(2)}<h2 class="center">Who are you choosing to become?</h2>
-      <p class="note center">Pick the quality you want to grow, not one you already have. Your avatar is your intention; medals come later, for your actions.</p>
+      <p class="note center">Pick the quality you want to grow. Your avatar is your intention; medals come later, for your actions.</p>
       ${avatarGrid(reg.avatar)}
       <div class="row" style="margin-top:12px"><button class="btn ghost" data-step="reg1">Back</button><button class="btn" id="reg2next">Next</button></div>`);
     if (st === "reg3") return authShell(`${steps(3)}<h2>Challenge rules</h2><div class="prose scroll">${esc((pub || DEFAULT_CONFIG).rulesText).replace(/\n/g, "<br>")}</div>
@@ -332,56 +329,37 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
         <label class="tick-row"><input type="checkbox" id="cRules" ${reg.consent.rules ? "checked" : ""}> I agree to the challenge rules.</label>
         <label class="tick-row"><input type="checkbox" id="cPrivacy" ${reg.consent.privacy ? "checked" : ""}> I have read and accept the privacy policy.</label>
         <label class="tick-row"><input type="checkbox" id="cHealth" ${reg.consent.health ? "checked" : ""}> I consent to my weight and wellness information being stored for this challenge, visible only to me and the administrator (POPIA). Under 18s need a parent or guardian to agree for them.</label>
-        <div class="row"><button type="button" class="btn ghost" data-step="reg2">Back</button><button class="btn">Send my code</button></div></form>`);
-    if (st === "reg4") return authShell(`${steps(4)}<p>We sent a 6 digit code to <b>${esc(reg.email)}</b>. It expires in 10 minutes.</p>
-      <form class="form" id="reg4">${codeInput()}${pinInput("p1", "Create a 4 digit PIN")}${pinInput("p2", "Confirm your PIN")}
-      <p class="note">Your PIN opens the app quickly on this device. Avoid easy PINs like 1234 or your birth year.</p>
-      <div class="row"><button type="button" class="btn ghost" data-resend="register">Resend code</button><button class="btn">Create my account</button></div></form>`);
-    if (st === "pin") return authShell(`<h2 class="center">Welcome back</h2><p class="center muted">Enter your PIN to open the challenge.</p>
-      <form class="form" id="pinForm">${pinInput("pin", "Your PIN", "current-password")}
-        <div id="mfaBox" class="${state.mfa ? "" : "hidden"}">${state.mfa ? `<p class="note">Administrator check: we sent a code to ${esc(state.mfa)}.</p>${codeInput("mfaCode")}` : ""}</div>
-        <button class="btn full">Open</button></form>
-      <div class="row between" style="margin-top:12px"><a href="#" data-step="rec1">Forgot my PIN</a><a href="#" data-forget>Use another account</a></div>`);
-    if (st === "dev1" || st === "rec1") return authShell(`<h2>${st === "dev1" ? "Sign in on this device" : "Reset my PIN"}</h2>
-      <p class="note">Enter the email address you registered with. We will send you a 6 digit code.</p>
-      <form class="form" id="${st}"><label>Email address<input id="aEmail" type="email" required autocomplete="email" value="${esc(reg.email)}"></label>
-      <div class="row"><button type="button" class="btn ghost" data-step="welcome">Back</button><button class="btn">Send code</button></div></form>
-      ${st === "dev1" ? `<p class="note">New here? <a href="#" data-step="reg1">Create an account</a></p>` : ""}`);
-    if (st === "dev2") return authShell(`<h2>Check your email</h2><p>If <b>${esc(reg.email)}</b> is registered, a code is on its way.</p>
-      <form class="form" id="dev2">${codeInput()}<div class="row"><button type="button" class="btn ghost" data-resend="device">Resend code</button><button class="btn">Verify this device</button></div></form>`);
-    if (st === "rec2") return authShell(`<h2>Choose a new PIN</h2><p>If <b>${esc(reg.email)}</b> is registered, a code is on its way.</p>
-      <form class="form" id="rec2">${codeInput()}${pinInput("p1", "New 4 digit PIN")}${pinInput("p2", "Confirm new PIN")}
-      <div class="row"><button type="button" class="btn ghost" data-resend="recover">Resend code</button><button class="btn">Save my new PIN</button></div></form>`);
+        <div class="row"><button type="button" class="btn ghost" data-step="reg2">Back</button><button class="btn">Next</button></div></form>`);
+    if (st === "reg4") return authShell(`${steps(4)}<h2>Create your PIN</h2>
+      <form class="form" id="reg4">${pinInput("p1", "Choose a 4 digit PIN")}${pinInput("p2", "Type it again")}
+      <p class="note">You'll use this PIN to open the app. Avoid easy PINs like 1234.</p>
+      <div class="row"><button type="button" class="btn ghost" data-step="reg3">Back</button><button class="btn">Join the challenge</button></div></form>`);
     return "";
   }
   function viewPending() {
     const a = state.account;
     return `<section class="card auth center">${avatarImg(a.avatar, "xl")}
       <h2>Thank you, ${esc(a.name.split(" ")[0])}!</h2>
-      <p>Your registration is waiting for the administrator to approve it and link it to your challenge record.</p>
+      <p>You're registered. The administrator will approve you shortly.</p>
       <div class="pledge" style="justify-content:center">${pledgeHtml(a.avatar)}</div>
-      <p class="note">This page refreshes by itself. You can close the app and come back later.</p>
+      <p class="note">This page refreshes by itself.</p>
       <button class="btn ghost" data-m="signout">Sign out</button></section>`;
   }
   async function authCall(path, body) {
     try { return await api("auth/" + path, { method: "POST", body }); }
-    catch (e) {
-      toast("⚠️ " + esc(e.message), 5000);
-      if (e.data && e.data.newDevice) { state.deviceToken = null; store.set("sbc_device", null); state.authStep = "dev1"; render(); }
-      return null;
-    }
+    catch (e) { toast("⚠️ " + esc(e.message), 5000); return null; }
   }
   function bindAuth() {
     const v = $("#view");
     $$("[data-step]", v).forEach((b) => b.addEventListener("click", async (e) => { e.preventDefault(); state.authStep = b.dataset.step; if (b.dataset.step === "reg3") await getPublic(); render(); }));
     $$("[data-rules]", v).forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); showRules(); }));
     $$("[data-m=signout]", v).forEach((b) => b.addEventListener("click", signOut));
-    $$("[data-forget]", v).forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); state.deviceToken = null; store.set("sbc_device", null); state.authStep = "welcome"; render(); }));
-    $$("[data-resend]", v).forEach((b) => b.addEventListener("click", async () => { if (await authCall("code", { email: reg.email, purpose: b.dataset.resend })) toast("📧 A new code is on its way."); }));
+    $$("[data-person]", v).forEach((b) => b.addEventListener("click", () => { pickedPerson = b.dataset.person; render(); const p = $("#pin"); if (p) p.focus(); }));
     const f = (id, fn) => { const el = $("#" + id, v); if (el) el.addEventListener("submit", async (e) => { e.preventDefault(); const btn = $("button:not([type=button])", el); btn.disabled = true; try { await fn(); } finally { btn.disabled = false; } }); };
+    f("pinForm", async () => { const res = await authCall("pin", { accountId: pickedPerson, pin: $("#pin").value }); if (res) finishAuth(res); else $("#pin").value = ""; });
     f("reg1", async () => {
-      reg.name = $("#rName").value.trim(); reg.email = $("#rEmail").value.trim().toLowerCase(); reg.mobile = $("#rMobile").value.trim();
-      if (reg.name.split(/\s+/).length < 1 || reg.name.length < 2) return toast("Please enter your full name.");
+      reg.name = $("#rName").value.trim(); reg.mobile = $("#rMobile").value.trim();
+      if (reg.name.length < 2) return toast("Please enter your name.");
       state.authStep = "reg2"; render();
     });
     if ($(".avgrid", v) && state.authStep === "reg2") {
@@ -391,26 +369,12 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
     f("reg3", async () => {
       reg.consent = { rules: $("#cRules").checked, privacy: $("#cPrivacy").checked, health: $("#cHealth").checked };
       if (!reg.consent.rules || !reg.consent.privacy || !reg.consent.health) return toast("Please tick all three boxes to continue.");
-      if (await authCall("code", { email: reg.email, purpose: "register" })) { state.authStep = "reg4"; render(); toast("📧 Check your email for your code."); }
+      state.authStep = "reg4"; render();
     });
     f("reg4", async () => {
       if ($("#p1").value !== $("#p2").value) return toast("The PINs do not match.");
-      const res = await authCall("register", { ...reg, code: $("#code").value, pin: $("#p1").value, device: deviceLabel() });
-      if (res) finishAuth(res, res.status === "active" ? `${avatarImg(reg.avatar, "sm")} Welcome to the challenge! ${esc(AVATARS[reg.avatar].pledge)}` : "✓ Registered. The administrator will approve your account soon.");
-    });
-    f("pinForm", async () => {
-      const res = await authCall("pin", { deviceToken: state.deviceToken, pin: $("#pin").value, code: $("#mfaCode") ? $("#mfaCode").value : undefined });
-      if (!res) return;
-      if (res.needCode) { state.mfa = res.email; const keep = $("#pin").value; render(); $("#pin").value = keep; toast("📧 Administrator sign in: check your email for a code."); return; }
-      state.mfa = null; finishAuth(res);
-    });
-    f("dev1", async () => { reg.email = $("#aEmail").value.trim().toLowerCase(); if (await authCall("code", { email: reg.email, purpose: "device" })) { state.authStep = "dev2"; render(); } });
-    f("rec1", async () => { reg.email = $("#aEmail").value.trim().toLowerCase(); if (await authCall("code", { email: reg.email, purpose: "recover" })) { state.authStep = "rec2"; render(); } });
-    f("dev2", async () => { const res = await authCall("device", { email: reg.email, code: $("#code").value, device: deviceLabel() }); if (res) finishAuth(res, "✓ This device is now recognised. Next time, just use your PIN."); });
-    f("rec2", async () => {
-      if ($("#p1").value !== $("#p2").value) return toast("The PINs do not match.");
-      const res = await authCall("recover", { email: reg.email, code: $("#code").value, pin: $("#p1").value, device: deviceLabel() });
-      if (res) finishAuth(res, "✓ Your new PIN is saved. Other devices have been signed out for your safety.");
+      const res = await authCall("register", { ...reg, pin: $("#p1").value });
+      if (res) { people = null; finishAuth(res, res.status === "active" ? `${avatarImg(reg.avatar, "sm")} Welcome to the challenge! ${esc(AVATARS[reg.avatar].pledge)}` : "✓ You're registered. The administrator will approve you soon."); }
     });
   }
 
@@ -1261,10 +1225,10 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
     const accts = [...A.accounts].sort((a, b) => order[a.status] - order[b.status] || a.name.localeCompare(b.name));
     return `<section class="card"><h2>👥 Participants (${accts.length})</h2><p class="note">Approve registrations and link each person to their record. The six pre loaded records hold the weights from the notebook.</p>
       <div class="list">${accts.map((a) => {
-        const locked = a.hardLocked || a.lockedUntil > Date.now();
+        const locked = a.lockedUntil > Date.now();
         return `<div class="acct">
           <div class="row">${avatarImg(a.avatar, "lg")}<div class="grow"><b>${esc(a.name)}</b> ${statusPill(a.status)} ${a.role === "admin" ? '<span class="pill">admin</span>' : ""} ${locked ? '<span class="pill warn">PIN locked</span>' : ""}<br>
-            <small>${esc(a.email)}${a.mobile ? " · " + esc(a.mobile) : ""} · joined ${shortDate(a.created.slice(0, 10))} · ${a.devices.length} device${a.devices.length === 1 ? "" : "s"}${a.memberId ? " · record: " + esc(a.memberId) : ""}</small></div></div>
+            <small>${a.mobile ? esc(a.mobile) + " · " : ""}joined ${shortDate(a.created.slice(0, 10))}${a.memberId ? " · record: " + esc(a.memberId) : ""}</small></div></div>
           ${a.status === "pending" ? `<div class="row wrap" style="margin-top:8px"><select data-link="${a.id}" style="flex:1">
               ${seeds.filter((x) => !x.linked).map((x) => `<option value="${x.id}" ${x.id === a.suggestedMember ? "selected" : ""}>Link to ${esc(x.name)}'s pre loaded record</option>`).join("")}
               <option value="new" ${!a.suggestedMember ? "selected" : ""}>Start a new record</option></select>
@@ -1274,7 +1238,7 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
             ${locked ? `<button class="btn small ghost" data-act-acct="unlock" data-id="${a.id}">Unlock PIN</button>` : ""}
             ${a.id !== state.account.id ? `
               ${a.status === "suspended" ? `<button class="btn small ghost" data-act-acct="reactivate" data-id="${a.id}">Reactivate</button>` : `<button class="btn small ghost" data-act-acct="suspend" data-id="${a.id}">Suspend</button>`}
-              <button class="btn small ghost" data-act-acct="revokeDevices" data-id="${a.id}">Sign out devices</button>
+              <button class="btn small ghost" data-act-acct="resetPin" data-id="${a.id}">Reset PIN</button>
               <button class="btn small ghost" data-act-acct="${a.role === "admin" ? "removeAdmin" : "makeAdmin"}" data-id="${a.id}">${a.role === "admin" ? "Remove admin" : "Make admin"}</button>
               <button class="btn small ghost danger" data-act-acct="deleteAccount" data-id="${a.id}">Delete</button>` : ""}
           </div></div>`; }).join("") || `<div class="empty">No registrations yet. Share the site link so the crew can sign up.</div>`}</div></section>`;
@@ -1363,12 +1327,12 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
         <form class="form" id="polForm"><div class="grid2">
           <label>Wrong PINs before a lock<input type="number" id="pMax" min="3" max="10" value="${c.pin.maxAttempts}"></label>
           <label>Lock time (minutes)<input type="number" id="pLock" min="1" max="1440" value="${c.pin.lockMinutes}"></label>
-          <label>Wrong PINs before email reset is required<input type="number" id="pHard" min="5" max="50" value="${c.pin.hardLockAfter}"></label></div>
+</div>
           <label class="tick-row"><input type="checkbox" id="pAuto" ${c.autoApprove ? "checked" : ""}> Approve new registrations automatically</label>
           <label>Challenge rules<textarea id="pRules" rows="7">${esc(c.rulesText)}</textarea></label>
           <label>Privacy policy (POPIA)<textarea id="pPriv" rows="7">${esc(c.privacyText)}</textarea></label>
           <button class="btn full">Save settings</button></form>
-        <p class="note">Administrators always need their PIN and an emailed code. Participants verify each new device by email; the PIN only unlocks recognised devices.</p></section>`;
+        <p class="note">Everyone signs in with their name and PIN. If someone forgets their PIN, reset it in Participants.</p></section>`;
   }
 
   function admAudit() {
@@ -1391,6 +1355,7 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
       const action = b.dataset.actAcct, id = b.dataset.id, body = { action, accountId: id };
       if (action === "approve") body.memberId = $(`[data-link="${id}"]`).value;
       if (action === "group") body.group = $(`[data-group="${id}"]`).value;
+      if (action === "resetPin") { const pin = prompt("Type a new 4 digit PIN for this person, then tell it to them privately:"); if (!pin) return; body.pin = pin.trim(); }
       if (action === "deleteAccount") { if (!confirm("Delete this account? This cannot be undone.")) return; body.deleteData = confirm("Also delete their challenge data (POPIA deletion request)? Press Cancel to keep their records."); }
       if (["suspend", "makeAdmin", "removeAdmin"].includes(action) && !confirm("Are you sure?")) return;
       await adminSend(body, "✓ Done.");
@@ -1407,7 +1372,7 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
     on("annForm", () => adminSend({ action: "announce", to: $("#annTo").value, title: $("#annTitle").value, message: $("#annMsg").value, until: $("#annUntil").value }, "📣 Announcement sent."));
     $$("[data-rm-ann]", v).forEach((b) => b.addEventListener("click", () => adminSend({ action: "announce", remove: b.dataset.rmAnn })));
     on("datesForm", () => adminSend({ action: "settings", start: $("#sStart").value, end: $("#sEnd").value }, "📅 Dates saved."));
-    on("polForm", () => adminSend({ action: "config", config: { ...A.config, pin: { maxAttempts: Number($("#pMax").value), lockMinutes: Number($("#pLock").value), hardLockAfter: Number($("#pHard").value) }, autoApprove: $("#pAuto").checked, rulesText: $("#pRules").value, privacyText: $("#pPriv").value } }, "⚙️ Settings saved."));
+    on("polForm", () => adminSend({ action: "config", config: { ...A.config, pin: { maxAttempts: Number($("#pMax").value), lockMinutes: Number($("#pLock").value), hardLockAfter: 50 }, autoApprove: $("#pAuto").checked, rulesText: $("#pRules").value, privacyText: $("#pPriv").value } }, "⚙️ Settings saved."));
     // Group weigh in (health data)
     const gf = $("#groupForm", v);
     if (gf) {

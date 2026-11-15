@@ -1,31 +1,25 @@
 // Stoic by Choice · Biggest Loser Challenge · secure API (Netlify Function + Netlify Blobs)
 //
-// Security model
-// * Registration and new devices are verified with a 6 digit code sent to the participant's email.
-// * The 4 digit PIN only unlocks the app on a device that was verified by email ("recognised device").
-// * PINs are stored as salted scrypt hashes; wrong guesses are counted and lock the account.
-// * Administrators need their PIN AND a fresh email code for every sign in (two factors).
+// Security model (kept simple on purpose)
+// * Join with a name, avatar, agreement to the rules and a 4 digit PIN. The first person to join is the administrator.
+// * Sign in by choosing your name and typing your PIN. PINs are stored as salted scrypt hashes.
+// * Wrong PINs are counted and lock the account for a while; the administrator can reset a PIN.
 // * Points are calculated here on the server with the shared rules in public/core.js.
-// * Weights and wellness details are only returned to their owner and to administrators;
-//   every administrator view of health data is written to the audit log.
+// * Weights are only returned to their owner and to administrators; journals only to their owner.
+//   Every administrator view of health data is written to the audit log.
 //
-// Required environment variables (Netlify > Site configuration > Environment variables):
-//   SESSION_SECRET  long random text used to sign tokens
-//   ADMIN_EMAIL     email address of the administrator (comma separated for more than one)
-//   SMTP_USER       Gmail address that sends the codes
-//   SMTP_PASS       Gmail app password (16 characters)
+// Required environment variable (Netlify > Project configuration > Environment variables):
+//   SESSION_SECRET  long random text used to sign sign in tokens
 import crypto from "node:crypto";
 import { getStore } from "@netlify/blobs";
-import nodemailer from "nodemailer";
 import { makeEngine, DEFAULT_CONFIG, DEFAULT_SETTINGS, AVATARS, PRIVATE_FIELDS, normRecord, todaySA as realToday, addDays } from "../../public/core.js";
 
 const env = (k) => (globalThis.Netlify?.env?.get?.(k) ?? process.env[k] ?? "");
 // TEST_TODAY lets a test server pretend to be on another date. Never set it on the live site.
 const todaySA = () => env("TEST_TODAY") || realToday();
 const SECRET = () => { const s = env("SESSION_SECRET"); if (!s || s.length < 16) throw httpErr(500, "Server not configured: set SESSION_SECRET"); return s; };
-const ADMIN_EMAILS = () => env("ADMIN_EMAIL").toLowerCase().split(",").map((x) => x.trim()).filter(Boolean);
 const COLORS = ["#E4572E", "#7B5CD6", "#F2A516", "#2E8B57", "#2F7FC1", "#D6457F", "#14A3A3", "#B8801A", "#8E44AD", "#C0392B", "#27AE60", "#2980B9"];
-const SESSION_HOURS = 12, DEVICE_DAYS = 180, CODE_MIN = 10;
+const SESSION_DAYS = 30;
 
 // Starting data from the crew's notebook (23 Nov 2024 "before" and Saturday 14 Nov 2026 start), with target weights.
 const SEED = {
@@ -86,7 +80,6 @@ async function listAccounts() {
 }
 const getAccount = (id) => getJ("acct/" + id);
 const saveAccount = (a) => setJ("acct/" + a.id, a);
-async function accountByEmail(email) { const id = await getJ("email/" + sha(email)); return id ? getAccount(id) : null; }
 const getConfig = async () => { const c = (await getJ("_config")) || {}; return { ...DEFAULT_CONFIG, ...c, points: { ...DEFAULT_CONFIG.points, ...(c.points || {}) }, treat: { ...DEFAULT_CONFIG.treat, ...(c.treat || {}) }, water: { ...DEFAULT_CONFIG.water, ...(c.water || {}) }, sleep: { ...DEFAULT_CONFIG.sleep, ...(c.sleep || {}) }, pin: { ...DEFAULT_CONFIG.pin, ...(c.pin || {}) } }; };
 const getSettings = async () => (await getJ("_settings")) || DEFAULT_SETTINGS;
 async function getRecord(memberId) { return normRecord((await getJ("member/" + memberId)) || (await getJ(memberId)) || seeded(memberId)); }
@@ -108,39 +101,8 @@ async function rateLimit(key, max, windowMin) {
   if (r.n > max) throw httpErr(429, `Too many attempts. Please wait ${Math.ceil((r.t + windowMin * 60000 - now) / 60000)} minutes and try again.`);
 }
 
-// ---------- email codes ----------
-let transport;
-async function sendMail(to, subject, text) {
-  if (env("DEV_EMAIL_LOG") === "1") { console.log(`[DEV EMAIL] to=${to} subject=${subject}\n${text}`); globalThis.__lastMail = { to, subject, text }; return; }
-  if (!env("SMTP_USER") || !env("SMTP_PASS")) throw httpErr(503, "Email sending is not set up yet. The administrator must add SMTP_USER and SMTP_PASS in Netlify.");
-  const port = Number(env("SMTP_PORT") || 465);
-  // Port 465 uses SSL from the start; port 587 upgrades with STARTTLS.
-  transport ||= nodemailer.createTransport({ host: env("SMTP_HOST") || "smtp.gmail.com", port, secure: port === 465, requireTLS: port !== 465, auth: { user: env("SMTP_USER"), pass: env("SMTP_PASS") } });
-  await transport.sendMail({ from: `"Stoic by Choice" <${env("SMTP_USER")}>`, to, subject, text });
-}
-async function issueCode(email, purpose, req) {
-  await rateLimit("send:" + email, 3, 15);
-  await rateLimit("sendip:" + clientIp(req), 12, 60);
-  const code = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
-  await setJ("code/" + sha(email + "|" + purpose), { h: sha(SECRET() + email + code), exp: Date.now() + CODE_MIN * 60000, tries: 0 });
-  const what = { register: "finish creating your account", device: "sign in on this device", recover: "reset your PIN", mfa: "complete your administrator sign in" }[purpose];
-  await sendMail(email, `Your Stoic by Choice code: ${code}`, `Your code to ${what} is:\n\n${code}\n\nIt expires in ${CODE_MIN} minutes. If you did not ask for this code, you can ignore this email.\n\nStoic by Choice · Biggest Loser Challenge`);
-}
-async function useCode(email, purpose, code) {
-  const k = "code/" + sha(email + "|" + purpose), c = await getJ(k);
-  if (!c || c.exp < Date.now()) throw httpErr(400, "That code has expired. Please request a new one.");
-  if (c.tries >= 5) { await db().delete(k); throw httpErr(429, "Too many wrong codes. Please request a new one."); }
-  if (sha(SECRET() + email + String(code || "").trim()) !== c.h) { c.tries++; await setJ(k, c); throw httpErr(400, "That code is not correct."); }
-  await db().delete(k);
-}
-
-// ---------- sessions and devices ----------
-function newDevice(acct, label) {
-  const dev = { id: rid(9), label: str(label, 60) || "Device", added: new Date().toISOString(), lastUsed: new Date().toISOString() };
-  acct.devices = [...(acct.devices || []).slice(-7), dev];
-  return sign({ a: acct.id, d: dev.id, e: Date.now() + DEVICE_DAYS * 864e5 });
-}
-const newSession = (acct, mfa) => sign({ a: acct.id, r: acct.role, m: !!mfa, v: acct.tokenVersion || 0, e: Date.now() + SESSION_HOURS * 36e5 });
+// ---------- sessions ----------
+const newSession = (acct) => sign({ a: acct.id, r: acct.role, m: true, v: acct.tokenVersion || 0, e: Date.now() + SESSION_DAYS * 864e5 });
 async function requireSession(req, { admin = false } = {}) {
   const tok = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
   const p = verify(tok);
@@ -148,10 +110,10 @@ async function requireSession(req, { admin = false } = {}) {
   const acct = await getAccount(p.a);
   if (!acct || (acct.tokenVersion || 0) !== p.v) throw httpErr(401, "Please sign in again.", { signin: true });
   if (acct.status === "suspended") throw httpErr(403, "Your account is suspended. Please contact the administrator.");
-  if (admin && (acct.role !== "admin" || !p.m)) throw httpErr(403, "Administrator sign in with an email code is required.");
+  if (admin && acct.role !== "admin") throw httpErr(403, "Only the administrator can do this.");
   return acct;
 }
-const publicAccount = (a) => ({ id: a.id, name: a.name, email: a.email, mobile: a.mobile || "", avatar: a.avatar, role: a.role, status: a.status, group: a.group || "", memberId: a.memberId || null, created: a.created, devices: (a.devices || []).map((d) => ({ id: d.id, label: d.label, added: d.added, lastUsed: d.lastUsed })), failedPins: a.failedPins || 0, lockedUntil: a.lockedUntil || 0, hardLocked: !!a.hardLocked, suggestedMember: a.suggestedMember || null });
+const publicAccount = (a) => ({ id: a.id, name: a.name, mobile: a.mobile || "", avatar: a.avatar, role: a.role, status: a.status, group: a.group || "", memberId: a.memberId || null, created: a.created, failedPins: a.failedPins || 0, lockedUntil: a.lockedUntil || 0, suggestedMember: a.suggestedMember || null });
 
 // ---------- the official state ----------
 async function buildState(viewer, { adminView = false } = {}) {
@@ -215,88 +177,53 @@ function cleanEntry(type, e = {}, today) {
 
 // ---------- route handlers ----------
 async function handleAuth(path, req, body) {
-  const email = normEmail(body.email);
-  if (path === "code") {
-    const purpose = ["register", "device", "recover"].includes(body.purpose) ? body.purpose : null;
-    if (!purpose || !validEmail(email)) throw httpErr(400, "Please enter a valid email address.");
-    const existing = await accountByEmail(email);
-    if (purpose === "register" && existing) throw httpErr(409, "This email is already registered. Use Sign in instead.");
-    if (purpose !== "register" && !existing) return json({ ok: true }); // do not reveal whether an email exists
-    await issueCode(email, purpose, req);
-    return json({ ok: true });
+  // List of people for the sign in screen: first name and avatar only.
+  if (path === "people") {
+    const accounts = (await listAccounts()).filter((a) => a.status !== "suspended").sort((a, b) => a.name.localeCompare(b.name));
+    return json({ people: accounts.map((a) => ({ id: a.id, name: a.name.split(" ")[0], avatar: a.avatar })), hasAdmin: accounts.some((a) => a.role === "admin") });
   }
   if (path === "register") {
-    await rateLimit("reg:" + clientIp(req), 8, 60);
-    if (!validEmail(email)) throw httpErr(400, "Please enter a valid email address.");
-    if (await accountByEmail(email)) throw httpErr(409, "This email is already registered.");
     const name = str(body.name, 40);
-    if (name.length < 2) throw httpErr(400, "Please enter your full name.");
+    if (name.length < 2) throw httpErr(400, "Please enter your name.");
     if (!AVATARS[body.avatar]) throw httpErr(400, "Please choose your avatar.");
     if (!body.consent?.rules || !body.consent?.privacy || !body.consent?.health) throw httpErr(400, "Please accept the challenge rules and the privacy policy.");
     checkPin(body.pin);
-    await useCode(email, "register", body.code);
-    const config = await getConfig();
-    const isAdmin = ADMIN_EMAILS().includes(email);
+    await rateLimit("reg:" + clientIp(req), 10, 60);
     const accounts = await listAccounts();
+    if (accounts.some((a) => a.name.toLowerCase() === name.toLowerCase())) throw httpErr(409, "Someone with this name has already joined. Add your surname to tell you apart.");
+    const config = await getConfig();
+    const isFirst = accounts.length === 0; // the first person to join becomes the administrator
     const first = name.split(/\s+/)[0].toLowerCase();
     const suggested = Object.keys(SEED).find((k) => k === first && !accounts.some((a) => a.memberId === k)) || null;
     const salt = rid(16);
     const acct = {
-      id: rid(9), name, email, mobile: str(body.mobile, 20), avatar: body.avatar, role: isAdmin ? "admin" : "participant",
-      status: isAdmin || config.autoApprove ? "active" : "pending", group: "", memberId: null, suggestedMember: suggested,
-      pinSalt: salt, pinHash: "", failedPins: 0, lockedUntil: 0, hardLocked: false, tokenVersion: 0, created: new Date().toISOString(),
-      consent: { rules: true, privacy: true, health: true, at: new Date().toISOString() }, devices: [],
+      id: rid(9), name, mobile: str(body.mobile, 20), avatar: body.avatar, role: isFirst ? "admin" : "participant",
+      status: isFirst || config.autoApprove ? "active" : "pending", group: "", memberId: null, suggestedMember: suggested,
+      pinSalt: salt, pinHash: hashPin(body.pin, salt), failedPins: 0, lockedUntil: 0, tokenVersion: 0, created: new Date().toISOString(),
+      consent: { rules: true, privacy: true, health: true, at: new Date().toISOString() },
     };
-    acct.pinHash = hashPin(body.pin, salt);
     if (acct.status === "active") { acct.memberId = suggested || acct.id; await markJoined(acct.memberId); }
-    const deviceToken = newDevice(acct, body.device);
     await saveAccount(acct);
-    await setJ("email/" + sha(email), acct.id);
-    await audit(acct, "registered", { target: acct.name, detail: acct.status });
-    return json({ ok: true, deviceToken, session: newSession(acct, true), status: acct.status });
-  }
-  if (path === "device" || path === "recover") {
-    await rateLimit("dev:" + clientIp(req), 15, 60);
-    const acct = await accountByEmail(email);
-    if (!acct) throw httpErr(400, "That code is not correct.");
-    await useCode(email, path === "device" ? "device" : "recover", body.code);
-    if (path === "recover") {
-      checkPin(body.pin);
-      acct.pinSalt = rid(16); acct.pinHash = hashPin(body.pin, acct.pinSalt);
-      acct.failedPins = 0; acct.lockedUntil = 0; acct.hardLocked = false; acct.tokenVersion = (acct.tokenVersion || 0) + 1; acct.devices = [];
-      await audit(acct, "pin reset by email");
-    } else await audit(acct, "new device verified");
-    const deviceToken = newDevice(acct, body.device);
-    await saveAccount(acct);
-    // The email code counts as the second factor, so administrators get a full session straight away.
-    return json({ ok: true, deviceToken, session: path === "recover" || acct.role !== "admin" ? newSession(acct, true) : newSession(acct, true), status: acct.status });
+    await audit(acct, isFirst ? "registered as administrator" : "registered", { target: acct.name, detail: acct.status });
+    return json({ ok: true, session: newSession(acct), status: acct.status });
   }
   if (path === "pin") {
-    const dt = verify(body.deviceToken);
-    if (!dt || !dt.d) throw httpErr(401, "This device is not recognised. Please verify it with your email.", { newDevice: true });
-    const acct = await getAccount(dt.a);
-    if (!acct || !(acct.devices || []).some((d) => d.id === dt.d)) throw httpErr(401, "This device is not recognised. Please verify it with your email.", { newDevice: true });
+    const acct = await getAccount(str(body.accountId, 20));
+    if (!acct) throw httpErr(400, "Please choose your name.");
+    if (acct.status === "suspended") throw httpErr(403, "Your account is suspended. Please contact the administrator.");
     const cfg = (await getConfig()).pin;
-    if (acct.hardLocked) throw httpErr(423, "Your PIN is locked after too many wrong attempts. Reset it with an email code.", { recover: true });
-    if (acct.lockedUntil > Date.now()) throw httpErr(423, `Too many wrong PINs. Try again in ${Math.ceil((acct.lockedUntil - Date.now()) / 60000)} minutes, or reset your PIN by email.`, { recover: true });
+    if (acct.lockedUntil > Date.now()) throw httpErr(423, `Too many wrong PINs. Try again in ${Math.ceil((acct.lockedUntil - Date.now()) / 60000)} minutes, or ask the administrator to reset your PIN.`);
     if (!pinMatches(acct, body.pin)) {
       acct.failedPins = (acct.failedPins || 0) + 1;
-      const left = cfg.maxAttempts - (acct.failedPins % cfg.maxAttempts || cfg.maxAttempts);
-      if (acct.failedPins >= cfg.hardLockAfter) { acct.hardLocked = true; await audit(acct, "pin hard locked"); }
-      else if (acct.failedPins % cfg.maxAttempts === 0) { acct.lockedUntil = Date.now() + cfg.lockMinutes * 60000; await audit(acct, "pin temporarily locked"); }
+      let msg;
+      if (acct.failedPins >= cfg.maxAttempts) { acct.lockedUntil = Date.now() + cfg.lockMinutes * 60000; acct.failedPins = 0; msg = `Too many wrong PINs. Locked for ${cfg.lockMinutes} minutes.`; await audit(acct, "pin temporarily locked"); }
+      else { const left = cfg.maxAttempts - acct.failedPins; msg = `Wrong PIN. ${left} attempt${left === 1 ? "" : "s"} left.`; }
       await saveAccount(acct);
-      throw httpErr(401, acct.hardLocked ? "PIN locked. Reset it with an email code." : acct.lockedUntil > Date.now() ? `Too many wrong PINs. Locked for ${cfg.lockMinutes} minutes.` : `Wrong PIN. ${left} attempt${left === 1 ? "" : "s"} left before a lock.`, { recover: acct.hardLocked });
-    }
-    // Administrators: PIN is the first factor; an emailed code is the second.
-    if (acct.role === "admin") {
-      if (!body.code) { await issueCode(acct.email, "mfa", req); return json({ needCode: true, email: acct.email.replace(/^(.).*(@.*)$/, "$1•••$2") }); }
-      await useCode(acct.email, "mfa", body.code);
+      throw httpErr(401, msg);
     }
     acct.failedPins = 0; acct.lockedUntil = 0;
-    acct.devices = (acct.devices || []).map((d) => (d.id === dt.d ? { ...d, lastUsed: new Date().toISOString() } : d));
-    await saveAccount(acct);
-    await audit(acct, "signed in");
-    return json({ ok: true, session: newSession(acct, acct.role === "admin"), status: acct.status });
+    await saveAccount(acct); await audit(acct, "signed in");
+    return json({ ok: true, session: newSession(acct), status: acct.status });
   }
   if (path === "change-pin") {
     const acct = await requireSession(req);
@@ -311,11 +238,6 @@ async function handleAuth(path, req, body) {
     if (!AVATARS[body.avatar]) throw httpErr(400, "Unknown avatar.");
     acct.avatar = body.avatar; await saveAccount(acct); await audit(acct, "changed avatar", { detail: body.avatar });
     return json(await buildState(acct, { adminView: false }));
-  }
-  if (path === "signout") {
-    const dt = verify(body.deviceToken);
-    if (dt?.a) { const acct = await getAccount(dt.a); if (acct) { acct.devices = (acct.devices || []).filter((d) => d.id !== dt.d); await saveAccount(acct); } }
-    return json({ ok: true });
   }
   throw httpErr(404, "Not found");
 }
@@ -378,15 +300,17 @@ async function handleAdmin(req, body) {
   } else if (a === "group") {
     const x = await acctFor(body.accountId); x.group = str(body.group, 40); await saveAccount(x); await log("assigned group", { target: x.name, detail: x.group });
   } else if (a === "unlock") {
-    const x = await acctFor(body.accountId); x.failedPins = 0; x.lockedUntil = 0; x.hardLocked = false; await saveAccount(x); await log("unlocked pin", { target: x.name });
-  } else if (a === "revokeDevices") {
-    const x = await acctFor(body.accountId); x.devices = []; x.tokenVersion = (x.tokenVersion || 0) + 1; await saveAccount(x); await log("signed out all devices", { target: x.name });
+    const x = await acctFor(body.accountId); x.failedPins = 0; x.lockedUntil = 0; await saveAccount(x); await log("unlocked pin", { target: x.name });
+  } else if (a === "resetPin") {
+    const x = await acctFor(body.accountId); checkPin(String(body.pin || ""));
+    x.pinSalt = rid(16); x.pinHash = hashPin(String(body.pin), x.pinSalt); x.failedPins = 0; x.lockedUntil = 0; x.tokenVersion = (x.tokenVersion || 0) + 1;
+    await saveAccount(x); await log("reset pin", { target: x.name });
   } else if (a === "makeAdmin" || a === "removeAdmin") {
     const x = await acctFor(body.accountId); if (x.id === admin.id) throw httpErr(400, "You cannot change your own role.");
     x.role = a === "makeAdmin" ? "admin" : "participant"; x.tokenVersion = (x.tokenVersion || 0) + 1; await saveAccount(x); await log(a === "makeAdmin" ? "granted admin role" : "removed admin role", { target: x.name });
   } else if (a === "deleteAccount") {
     const x = await acctFor(body.accountId); if (x.id === admin.id) throw httpErr(400, "You cannot delete yourself.");
-    await db().delete("acct/" + x.id); await db().delete("email/" + sha(x.email));
+    await db().delete("acct/" + x.id);
     if (body.deleteData && x.memberId) await saveRecord(x.memberId, normRecord({}));
     await log("deleted participant (POPIA request)", { target: x.name, detail: body.deleteData ? "account and data" : "account only" });
   } else if (a === "config") {

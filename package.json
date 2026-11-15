@@ -5,7 +5,6 @@
   "type": "module",
   "description": "Shared weight loss tracker for the Kilo Crew",
   "dependencies": {
-    "@netlify/blobs": "^11.1.9",
-    "nodemailer": "^7.0.0"
+    "@netlify/blobs": "^11.1.9"
   }
 }
