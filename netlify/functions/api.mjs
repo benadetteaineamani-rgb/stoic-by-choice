@@ -1,0 +1,479 @@
+// Stoic by Choice · Biggest Loser Challenge · secure API (Netlify Function + Netlify Blobs)
+//
+// Security model
+// * Registration and new devices are verified with a 6 digit code sent to the participant's email.
+// * The 4 digit PIN only unlocks the app on a device that was verified by email ("recognised device").
+// * PINs are stored as salted scrypt hashes; wrong guesses are counted and lock the account.
+// * Administrators need their PIN AND a fresh email code for every sign in (two factors).
+// * Points are calculated here on the server with the shared rules in public/core.js.
+// * Weights and wellness details are only returned to their owner and to administrators;
+//   every administrator view of health data is written to the audit log.
+//
+// Required environment variables (Netlify > Site configuration > Environment variables):
+//   SESSION_SECRET  long random text used to sign tokens
+//   ADMIN_EMAIL     email address of the administrator (comma separated for more than one)
+//   SMTP_USER       Gmail address that sends the codes
+//   SMTP_PASS       Gmail app password (16 characters)
+import crypto from "node:crypto";
+import { getStore } from "@netlify/blobs";
+import nodemailer from "nodemailer";
+import { makeEngine, DEFAULT_CONFIG, DEFAULT_SETTINGS, AVATARS, PRIVATE_FIELDS, normRecord, todaySA as realToday, addDays } from "../../public/core.js";
+
+const env = (k) => (globalThis.Netlify?.env?.get?.(k) ?? process.env[k] ?? "");
+// TEST_TODAY lets a test server pretend to be on another date. Never set it on the live site.
+const todaySA = () => env("TEST_TODAY") || realToday();
+const SECRET = () => { const s = env("SESSION_SECRET"); if (!s || s.length < 16) throw httpErr(500, "Server not configured: set SESSION_SECRET"); return s; };
+const ADMIN_EMAILS = () => env("ADMIN_EMAIL").toLowerCase().split(",").map((x) => x.trim()).filter(Boolean);
+const COLORS = ["#E4572E", "#7B5CD6", "#F2A516", "#2E8B57", "#2F7FC1", "#D6457F", "#14A3A3", "#B8801A", "#8E44AD", "#C0392B", "#27AE60", "#2980B9"];
+const SESSION_HOURS = 12, DEVICE_DAYS = 180, CODE_MIN = 10;
+
+// Starting data from the crew's notebook (23 Nov 2024 "before" and Saturday 14 Nov 2026 start), with target weights.
+const SEED = {
+  benadette: { name: "Benadette", sex: "f", before: 100.9, start: 70.9, goal: 62 },
+  thandi: { name: "Thandi", sex: "f", before: 118.5, start: 88.5, goal: 70 },
+  kgotso: { name: "Kgotso", sex: "m", before: 76.4, start: 52.8, goal: 45 },
+  judith: { name: "Judith", sex: "f", before: 94.0, start: 77.6, goal: 60 },
+  patrick: { name: "Patrick", sex: "m", before: 79.8, start: 64.4, goal: 50 },
+  thabo: { name: "Thabo", sex: "m", before: 116.3, start: 99.3, goal: 85 },
+};
+function seeded(m) {
+  const x = SEED[m], r = normRecord({});
+  if (!x) return r;
+  r.profile = { name: x.name, sex: x.sex, age: null, heightCm: null, startWeight: x.start, goalWeight: x.goal, activity: 1.375, rate: 0.5, kidPlan: "controlled", beforeWeight: x.before, beforeDate: "2024-11-23" };
+  r.weights = [{ id: "start-2026-11-14", date: "2026-11-14", kg: x.start }];
+  return r;
+}
+
+// ---------- helpers ----------
+function httpErr(status, message, extra = {}) { const e = new Error(message); e.status = status; e.extra = extra; return e; }
+const json = (data, status = 200) => Response.json(data, { status, headers: { "cache-control": "no-store" } });
+const isDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+const str = (s, n) => String(s ?? "").trim().slice(0, n);
+const num = (v, min, max) => { if (v === null || v === undefined || v === "") return null; const x = Number(v); if (!Number.isFinite(x)) return null; return Math.min(max, Math.max(min, Math.round(x * 10) / 10)); };
+const normEmail = (e) => str(e, 120).toLowerCase();
+const validEmail = (e) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e);
+const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
+const rid = (n = 12) => crypto.randomBytes(n).toString("base64url");
+const b64 = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+const unb64 = (s) => JSON.parse(Buffer.from(s, "base64url").toString());
+const sign = (payload) => { const body = b64(payload); return body + "." + crypto.createHmac("sha256", SECRET()).update(body).digest("base64url"); };
+function verify(token) {
+  if (!token || typeof token !== "string" || !token.includes(".")) return null;
+  const [body, sig] = token.split(".");
+  const good = crypto.createHmac("sha256", SECRET()).update(body).digest("base64url");
+  if (sig.length !== good.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(good))) return null;
+  try { const p = unb64(body); return p.e && p.e < Date.now() ? null : p; } catch { return null; }
+}
+const WEAK_PINS = new Set(["0000", "1111", "2222", "3333", "4444", "5555", "6666", "7777", "8888", "9999", "1234", "4321", "1212", "0123", "2580", "1122", "6969", "1004", "2000", "1010"]);
+function checkPin(pin) {
+  if (!/^\d{4}$/.test(String(pin || ""))) throw httpErr(400, "Your PIN must be exactly 4 digits.");
+  if (WEAK_PINS.has(pin)) throw httpErr(400, "That PIN is too easy to guess. Please choose another one.");
+}
+const hashPin = (pin, salt) => crypto.scryptSync(pin + SECRET(), salt, 32).toString("hex");
+function pinMatches(acct, pin) {
+  const h = Buffer.from(hashPin(String(pin || ""), acct.pinSalt), "hex"), s = Buffer.from(acct.pinHash, "hex");
+  return h.length === s.length && crypto.timingSafeEqual(h, s);
+}
+const clientIp = (req) => req.headers.get("x-nf-client-connection-ip") || (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || "local";
+
+// ---------- storage ----------
+const db = () => getStore({ name: "kilocrew", consistency: "strong" });
+const getJ = async (k, d = null) => (await db().get(k, { type: "json" })) ?? d;
+const setJ = (k, v) => db().setJSON(k, v);
+async function listAccounts() {
+  const { blobs } = await db().list({ prefix: "acct/" });
+  return (await Promise.all(blobs.map((b) => getJ(b.key)))).filter(Boolean);
+}
+const getAccount = (id) => getJ("acct/" + id);
+const saveAccount = (a) => setJ("acct/" + a.id, a);
+async function accountByEmail(email) { const id = await getJ("email/" + sha(email)); return id ? getAccount(id) : null; }
+const getConfig = async () => { const c = (await getJ("_config")) || {}; return { ...DEFAULT_CONFIG, ...c, points: { ...DEFAULT_CONFIG.points, ...(c.points || {}) }, treat: { ...DEFAULT_CONFIG.treat, ...(c.treat || {}) }, water: { ...DEFAULT_CONFIG.water, ...(c.water || {}) }, sleep: { ...DEFAULT_CONFIG.sleep, ...(c.sleep || {}) }, pin: { ...DEFAULT_CONFIG.pin, ...(c.pin || {}) } }; };
+const getSettings = async () => (await getJ("_settings")) || DEFAULT_SETTINGS;
+async function getRecord(memberId) { return normRecord((await getJ("member/" + memberId)) || (await getJ(memberId)) || seeded(memberId)); }
+const saveRecord = (memberId, r) => setJ("member/" + memberId, r);
+
+async function audit(by, action, detail = {}) {
+  const log = (await getJ("_audit")) || [];
+  log.push({ at: new Date().toISOString(), by: by ? { id: by.id, name: by.name } : null, action, ...detail });
+  await setJ("_audit", log.slice(-3000));
+}
+
+// Simple fixed window rate limiter stored in Blobs.
+async function rateLimit(key, max, windowMin) {
+  const k = "rl/" + sha(key), now = Date.now();
+  let r = (await getJ(k)) || { n: 0, t: now };
+  if (now - r.t > windowMin * 60000) r = { n: 0, t: now };
+  r.n++;
+  await setJ(k, r);
+  if (r.n > max) throw httpErr(429, `Too many attempts. Please wait ${Math.ceil((r.t + windowMin * 60000 - now) / 60000)} minutes and try again.`);
+}
+
+// ---------- email codes ----------
+let transport;
+async function sendMail(to, subject, text) {
+  if (env("DEV_EMAIL_LOG") === "1") { console.log(`[DEV EMAIL] to=${to} subject=${subject}\n${text}`); globalThis.__lastMail = { to, subject, text }; return; }
+  if (!env("SMTP_USER") || !env("SMTP_PASS")) throw httpErr(503, "Email sending is not set up yet. The administrator must add SMTP_USER and SMTP_PASS in Netlify.");
+  const port = Number(env("SMTP_PORT") || 465);
+  // Port 465 uses SSL from the start; port 587 upgrades with STARTTLS.
+  transport ||= nodemailer.createTransport({ host: env("SMTP_HOST") || "smtp.gmail.com", port, secure: port === 465, requireTLS: port !== 465, auth: { user: env("SMTP_USER"), pass: env("SMTP_PASS") } });
+  await transport.sendMail({ from: `"Stoic by Choice" <${env("SMTP_USER")}>`, to, subject, text });
+}
+async function issueCode(email, purpose, req) {
+  await rateLimit("send:" + email, 3, 15);
+  await rateLimit("sendip:" + clientIp(req), 12, 60);
+  const code = String(crypto.randomInt(0, 1000000)).padStart(6, "0");
+  await setJ("code/" + sha(email + "|" + purpose), { h: sha(SECRET() + email + code), exp: Date.now() + CODE_MIN * 60000, tries: 0 });
+  const what = { register: "finish creating your account", device: "sign in on this device", recover: "reset your PIN", mfa: "complete your administrator sign in" }[purpose];
+  await sendMail(email, `Your Stoic by Choice code: ${code}`, `Your code to ${what} is:\n\n${code}\n\nIt expires in ${CODE_MIN} minutes. If you did not ask for this code, you can ignore this email.\n\nStoic by Choice · Biggest Loser Challenge`);
+}
+async function useCode(email, purpose, code) {
+  const k = "code/" + sha(email + "|" + purpose), c = await getJ(k);
+  if (!c || c.exp < Date.now()) throw httpErr(400, "That code has expired. Please request a new one.");
+  if (c.tries >= 5) { await db().delete(k); throw httpErr(429, "Too many wrong codes. Please request a new one."); }
+  if (sha(SECRET() + email + String(code || "").trim()) !== c.h) { c.tries++; await setJ(k, c); throw httpErr(400, "That code is not correct."); }
+  await db().delete(k);
+}
+
+// ---------- sessions and devices ----------
+function newDevice(acct, label) {
+  const dev = { id: rid(9), label: str(label, 60) || "Device", added: new Date().toISOString(), lastUsed: new Date().toISOString() };
+  acct.devices = [...(acct.devices || []).slice(-7), dev];
+  return sign({ a: acct.id, d: dev.id, e: Date.now() + DEVICE_DAYS * 864e5 });
+}
+const newSession = (acct, mfa) => sign({ a: acct.id, r: acct.role, m: !!mfa, v: acct.tokenVersion || 0, e: Date.now() + SESSION_HOURS * 36e5 });
+async function requireSession(req, { admin = false } = {}) {
+  const tok = (req.headers.get("authorization") || "").replace(/^Bearer\s+/i, "");
+  const p = verify(tok);
+  if (!p || !p.a) throw httpErr(401, "Please sign in.", { signin: true });
+  const acct = await getAccount(p.a);
+  if (!acct || (acct.tokenVersion || 0) !== p.v) throw httpErr(401, "Please sign in again.", { signin: true });
+  if (acct.status === "suspended") throw httpErr(403, "Your account is suspended. Please contact the administrator.");
+  if (admin && (acct.role !== "admin" || !p.m)) throw httpErr(403, "Administrator sign in with an email code is required.");
+  return acct;
+}
+const publicAccount = (a) => ({ id: a.id, name: a.name, email: a.email, mobile: a.mobile || "", avatar: a.avatar, role: a.role, status: a.status, group: a.group || "", memberId: a.memberId || null, created: a.created, devices: (a.devices || []).map((d) => ({ id: d.id, label: d.label, added: d.added, lastUsed: d.lastUsed })), failedPins: a.failedPins || 0, lockedUntil: a.lockedUntil || 0, hardLocked: !!a.hardLocked, suggestedMember: a.suggestedMember || null });
+
+// ---------- the official state ----------
+async function buildState(viewer, { adminView = false } = {}) {
+  const [settings, config, accounts] = await Promise.all([getSettings(), getConfig(), listAccounts()]);
+  const challenges = (await getJ("_challenges")) || [], adjustments = (await getJ("_adjustments")) || [];
+  const manualAwards = (await getJ("_manualAwards")) || [], announcements = (await getJ("_announcements")) || [];
+  const active = accounts.filter((a) => a.status === "active" && a.memberId).sort((a, b) => a.created.localeCompare(b.created));
+  const participants = active.map((a, i) => ({ memberId: a.memberId, name: a.name, avatar: a.avatar, group: a.group || "", color: COLORS[i % COLORS.length], accountId: a.id }));
+  const records = {};
+  await Promise.all(participants.map(async (p) => { records[p.memberId] = await getRecord(p.memberId); }));
+  const today = todaySA();
+  const engine = makeEngine({ settings: () => settings, config: () => config, today: () => today, challengeDefs: () => challenges, adjustments: () => adjustments });
+  const { summaries, results } = engine.computeAll(participants, records);
+  const isAdmin = viewer.role === "admin" && adminView;
+  const shared = {};
+  for (const [id, s] of Object.entries(summaries)) {
+    if (isAdmin || id === viewer.memberId) shared[id] = s;
+    else { const c = { ...s }; for (const f of PRIVATE_FIELDS) c[f] = null; delete c.treats; shared[id] = c; }
+  }
+  const t = today;
+  const aggregates = { lostKg: 0, since2024: 0 };
+  for (const p of participants) { const sm = summaries[p.memberId], r = records[p.memberId]; if (sm.lostKg > 0) aggregates.lostKg += sm.lostKg; const bw = r.profile.beforeWeight, cw = engine.latestWeight(r); if (bw && cw && bw > cw) aggregates.since2024 += bw - cw; }
+  const out = {
+    aggregates,
+    serverToday: today, settings, config: { points: config.points, treat: config.treat, water: config.water, sleep: config.sleep, rulesText: config.rulesText, privacyText: config.privacyText },
+    me: publicAccount(viewer), participants, summaries: shared, results,
+    myRecord: viewer.memberId ? records[viewer.memberId] || (await getRecord(viewer.memberId)) : null,
+    challenges: challenges.filter((c) => c.end >= addDays(t, -31)),
+    manualAwards: manualAwards.map((x) => ({ id: x.id, memberId: x.memberId, award: x.award, note: x.note, date: x.date })),
+    announcements: announcements.filter((x) => (!x.until || x.until >= t) && (x.to === "all" || x.to === viewer.memberId)).slice(-10).reverse(),
+  };
+  if (isAdmin) {
+    out.admin = {
+      accounts: accounts.map(publicAccount), records: Object.fromEntries(Object.entries(records).map(([k, r]) => [k, { ...r, reflections: r.reflections.map((x) => ({ id: x.id, date: x.date })) }])), config, adjustments, announcements: announcements.slice().reverse(),
+      audit: ((await getJ("_audit")) || []).slice(-400).reverse(), seeds: Object.keys(SEED).map((k) => ({ id: k, name: SEED[k].name, linked: accounts.some((a) => a.memberId === k) })),
+    };
+  }
+  return out;
+}
+
+// Missed day penalties only start from the day someone joins (never before the challenge start).
+async function markJoined(memberId) {
+  const r = await getRecord(memberId), t = todaySA(), start = (await getSettings()).start;
+  if (!r.profile.joinedDate) { r.profile.joinedDate = t > start ? t : start; await saveRecord(memberId, r); }
+}
+
+// ---------- validation of participant entries ----------
+const TYPES = ["foods", "exercises", "weights", "treats", "tasks", "reflections", "challenges", "water", "sleep"];
+function cleanEntry(type, e = {}, today) {
+  const base = { id: str(e.id, 40) || rid(6), date: isDate(e.date) ? e.date : null };
+  if (!base.date || base.date > today || base.date < "2026-11-01") throw httpErr(400, "That date cannot be used.");
+  if (type === "foods") { const kcal = num(e.kcal, 0, 10000); if (kcal === null || !str(e.name, 80)) throw httpErr(400, "Please enter the food and its calories."); return { ...base, meal: str(e.meal, 20) || "Snack", name: str(e.name, 80), kcal }; }
+  if (type === "exercises") { const kcal = num(e.kcal, 0, 5000), minutes = num(e.minutes, 1, 600); if (kcal === null || minutes === null || !str(e.activity, 80)) throw httpErr(400, "Please enter the activity and minutes."); return { ...base, activity: str(e.activity, 80), minutes, kcal }; }
+  if (type === "weights") { const kg = num(e.kg, 20, 400); if (kg === null) throw httpErr(400, "Please enter a weight between 20 and 400 kg."); return { ...base, kg }; }
+  if (type === "reflections") { const text = str(e.text, 2000); if (!text) throw httpErr(400, "Please write something in your journal."); return { ...base, text, mood: ["great", "good", "okay", "low", "tough"].includes(e.mood) ? e.mood : null, prompt: str(e.prompt, 200) }; }
+  if (type === "sleep") { const hours = num(e.hours, 0, 16); if (hours === null) throw httpErr(400, "Please enter how many hours you slept."); return { ...base, hours: Math.round(hours * 2) / 2, quality: ["great", "good", "okay", "poor"].includes(e.quality) ? e.quality : null }; }
+  if (type === "water") { const glasses = num(e.glasses, 0, 30); if (glasses === null) throw httpErr(400, "Please enter the number of glasses."); return { ...base, glasses: Math.round(glasses) }; }
+  if (type === "challenges") return { ...base, challengeId: str(e.challengeId, 40) };
+  return base; // treats, tasks
+}
+
+// ---------- route handlers ----------
+async function handleAuth(path, req, body) {
+  const email = normEmail(body.email);
+  if (path === "code") {
+    const purpose = ["register", "device", "recover"].includes(body.purpose) ? body.purpose : null;
+    if (!purpose || !validEmail(email)) throw httpErr(400, "Please enter a valid email address.");
+    const existing = await accountByEmail(email);
+    if (purpose === "register" && existing) throw httpErr(409, "This email is already registered. Use Sign in instead.");
+    if (purpose !== "register" && !existing) return json({ ok: true }); // do not reveal whether an email exists
+    await issueCode(email, purpose, req);
+    return json({ ok: true });
+  }
+  if (path === "register") {
+    await rateLimit("reg:" + clientIp(req), 8, 60);
+    if (!validEmail(email)) throw httpErr(400, "Please enter a valid email address.");
+    if (await accountByEmail(email)) throw httpErr(409, "This email is already registered.");
+    const name = str(body.name, 40);
+    if (name.length < 2) throw httpErr(400, "Please enter your full name.");
+    if (!AVATARS[body.avatar]) throw httpErr(400, "Please choose your avatar.");
+    if (!body.consent?.rules || !body.consent?.privacy || !body.consent?.health) throw httpErr(400, "Please accept the challenge rules and the privacy policy.");
+    checkPin(body.pin);
+    await useCode(email, "register", body.code);
+    const config = await getConfig();
+    const isAdmin = ADMIN_EMAILS().includes(email);
+    const accounts = await listAccounts();
+    const first = name.split(/\s+/)[0].toLowerCase();
+    const suggested = Object.keys(SEED).find((k) => k === first && !accounts.some((a) => a.memberId === k)) || null;
+    const salt = rid(16);
+    const acct = {
+      id: rid(9), name, email, mobile: str(body.mobile, 20), avatar: body.avatar, role: isAdmin ? "admin" : "participant",
+      status: isAdmin || config.autoApprove ? "active" : "pending", group: "", memberId: null, suggestedMember: suggested,
+      pinSalt: salt, pinHash: "", failedPins: 0, lockedUntil: 0, hardLocked: false, tokenVersion: 0, created: new Date().toISOString(),
+      consent: { rules: true, privacy: true, health: true, at: new Date().toISOString() }, devices: [],
+    };
+    acct.pinHash = hashPin(body.pin, salt);
+    if (acct.status === "active") { acct.memberId = suggested || acct.id; await markJoined(acct.memberId); }
+    const deviceToken = newDevice(acct, body.device);
+    await saveAccount(acct);
+    await setJ("email/" + sha(email), acct.id);
+    await audit(acct, "registered", { target: acct.name, detail: acct.status });
+    return json({ ok: true, deviceToken, session: newSession(acct, true), status: acct.status });
+  }
+  if (path === "device" || path === "recover") {
+    await rateLimit("dev:" + clientIp(req), 15, 60);
+    const acct = await accountByEmail(email);
+    if (!acct) throw httpErr(400, "That code is not correct.");
+    await useCode(email, path === "device" ? "device" : "recover", body.code);
+    if (path === "recover") {
+      checkPin(body.pin);
+      acct.pinSalt = rid(16); acct.pinHash = hashPin(body.pin, acct.pinSalt);
+      acct.failedPins = 0; acct.lockedUntil = 0; acct.hardLocked = false; acct.tokenVersion = (acct.tokenVersion || 0) + 1; acct.devices = [];
+      await audit(acct, "pin reset by email");
+    } else await audit(acct, "new device verified");
+    const deviceToken = newDevice(acct, body.device);
+    await saveAccount(acct);
+    // The email code counts as the second factor, so administrators get a full session straight away.
+    return json({ ok: true, deviceToken, session: path === "recover" || acct.role !== "admin" ? newSession(acct, true) : newSession(acct, true), status: acct.status });
+  }
+  if (path === "pin") {
+    const dt = verify(body.deviceToken);
+    if (!dt || !dt.d) throw httpErr(401, "This device is not recognised. Please verify it with your email.", { newDevice: true });
+    const acct = await getAccount(dt.a);
+    if (!acct || !(acct.devices || []).some((d) => d.id === dt.d)) throw httpErr(401, "This device is not recognised. Please verify it with your email.", { newDevice: true });
+    const cfg = (await getConfig()).pin;
+    if (acct.hardLocked) throw httpErr(423, "Your PIN is locked after too many wrong attempts. Reset it with an email code.", { recover: true });
+    if (acct.lockedUntil > Date.now()) throw httpErr(423, `Too many wrong PINs. Try again in ${Math.ceil((acct.lockedUntil - Date.now()) / 60000)} minutes, or reset your PIN by email.`, { recover: true });
+    if (!pinMatches(acct, body.pin)) {
+      acct.failedPins = (acct.failedPins || 0) + 1;
+      const left = cfg.maxAttempts - (acct.failedPins % cfg.maxAttempts || cfg.maxAttempts);
+      if (acct.failedPins >= cfg.hardLockAfter) { acct.hardLocked = true; await audit(acct, "pin hard locked"); }
+      else if (acct.failedPins % cfg.maxAttempts === 0) { acct.lockedUntil = Date.now() + cfg.lockMinutes * 60000; await audit(acct, "pin temporarily locked"); }
+      await saveAccount(acct);
+      throw httpErr(401, acct.hardLocked ? "PIN locked. Reset it with an email code." : acct.lockedUntil > Date.now() ? `Too many wrong PINs. Locked for ${cfg.lockMinutes} minutes.` : `Wrong PIN. ${left} attempt${left === 1 ? "" : "s"} left before a lock.`, { recover: acct.hardLocked });
+    }
+    // Administrators: PIN is the first factor; an emailed code is the second.
+    if (acct.role === "admin") {
+      if (!body.code) { await issueCode(acct.email, "mfa", req); return json({ needCode: true, email: acct.email.replace(/^(.).*(@.*)$/, "$1•••$2") }); }
+      await useCode(acct.email, "mfa", body.code);
+    }
+    acct.failedPins = 0; acct.lockedUntil = 0;
+    acct.devices = (acct.devices || []).map((d) => (d.id === dt.d ? { ...d, lastUsed: new Date().toISOString() } : d));
+    await saveAccount(acct);
+    await audit(acct, "signed in");
+    return json({ ok: true, session: newSession(acct, acct.role === "admin"), status: acct.status });
+  }
+  if (path === "change-pin") {
+    const acct = await requireSession(req);
+    if (!pinMatches(acct, body.currentPin)) throw httpErr(400, "Your current PIN is not correct.");
+    checkPin(body.pin);
+    acct.pinSalt = rid(16); acct.pinHash = hashPin(body.pin, acct.pinSalt);
+    await saveAccount(acct); await audit(acct, "changed pin");
+    return json({ ok: true });
+  }
+  if (path === "avatar") {
+    const acct = await requireSession(req);
+    if (!AVATARS[body.avatar]) throw httpErr(400, "Unknown avatar.");
+    acct.avatar = body.avatar; await saveAccount(acct); await audit(acct, "changed avatar", { detail: body.avatar });
+    return json(await buildState(acct, { adminView: false }));
+  }
+  if (path === "signout") {
+    const dt = verify(body.deviceToken);
+    if (dt?.a) { const acct = await getAccount(dt.a); if (acct) { acct.devices = (acct.devices || []).filter((d) => d.id !== dt.d); await saveAccount(acct); } }
+    return json({ ok: true });
+  }
+  throw httpErr(404, "Not found");
+}
+
+async function handleData(req, body) {
+  const acct = await requireSession(req);
+  if (acct.status !== "active" || !acct.memberId) throw httpErr(403, "Your registration is waiting for the administrator's approval.");
+  const [settings, config, challenges] = [await getSettings(), await getConfig(), (await getJ("_challenges")) || []];
+  const today = todaySA();
+  const r = await getRecord(acct.memberId);
+  if (body.action === "profile") {
+    const p = body.profile || {};
+    r.profile = {
+      ...r.profile, sex: p.sex === "m" ? "m" : "f", age: num(p.age, 5, 110), heightCm: num(p.heightCm, 90, 230), goalWeight: num(p.goalWeight, 20, 400),
+      activity: [1.2, 1.375, 1.55, 1.725].includes(Number(p.activity)) ? Number(p.activity) : 1.375,
+      rate: [0.12, 0.25, 0.5, 0.75].includes(Number(p.rate)) ? Number(p.rate) : 0.5, kidPlan: p.kidPlan === "habits" ? "habits" : "controlled",
+    };
+    if (!r.profile.startWeight && num(p.startWeight, 20, 400)) r.profile.startWeight = num(p.startWeight, 20, 400); // only the first time
+  } else if (body.action === "add" && TYPES.includes(body.type)) {
+    const e = cleanEntry(body.type, body.entry, today);
+    if (body.type === "treats") {
+      const eng = makeEngine({ settings: () => settings, config: () => config, today: () => today });
+      if (eng.treats(r).left < 1) throw httpErr(400, "You have no treat tokens left.");
+    }
+    if (body.type === "challenges") {
+      const def = challenges.find((c) => c.id === e.challengeId);
+      if (!def || e.date < def.start || e.date > def.end) throw httpErr(400, "That challenge is not open.");
+    }
+    if (["weights", "treats", "tasks", "water", "reflections", "sleep"].includes(body.type)) r[body.type] = r[body.type].filter((w) => w.date !== e.date);
+    if (body.type === "challenges") r.challenges = r.challenges.filter((x) => !(x.date === e.date && x.challengeId === e.challengeId));
+    r[body.type].push(e);
+    r[body.type] = r[body.type].slice(-5000);
+  } else if (body.action === "delete" && TYPES.includes(body.type)) {
+    r[body.type] = r[body.type].filter((e) => e.id !== body.id);
+  } else throw httpErr(400, "Unknown action.");
+  await saveRecord(acct.memberId, r);
+  return json(await buildState(acct));
+}
+
+async function handleAdmin(req, body) {
+  const admin = await requireSession(req, { admin: true });
+  const a = body.action;
+  const log = (action, detail) => audit(admin, action, detail);
+  const acctFor = async (id) => { const x = await getAccount(id); if (!x) throw httpErr(404, "Participant not found."); return x; };
+  const list = async (key) => (await getJ(key)) || [];
+  if (a === "view") { await log("viewed admin centre and health data"); return json(await buildState(admin, { adminView: true })); }
+  if (a === "approve") {
+    const x = await acctFor(body.accountId);
+    const accounts = await listAccounts();
+    let mid = body.memberId === "new" || !body.memberId ? x.id : String(body.memberId);
+    if (accounts.some((o) => o.id !== x.id && o.memberId === mid)) throw httpErr(400, "That record is already linked to someone else.");
+    x.status = "active"; x.memberId = mid; await saveAccount(x);
+    await markJoined(mid);
+    await log("approved participant", { target: x.name, detail: "record " + mid });
+  } else if (a === "suspend" || a === "reactivate") {
+    const x = await acctFor(body.accountId);
+    if (x.id === admin.id) throw httpErr(400, "You cannot suspend yourself.");
+    x.status = a === "suspend" ? "suspended" : x.memberId ? "active" : "pending"; x.tokenVersion = (x.tokenVersion || 0) + 1; await saveAccount(x);
+    await log(a === "suspend" ? "suspended participant" : "reactivated participant", { target: x.name });
+  } else if (a === "group") {
+    const x = await acctFor(body.accountId); x.group = str(body.group, 40); await saveAccount(x); await log("assigned group", { target: x.name, detail: x.group });
+  } else if (a === "unlock") {
+    const x = await acctFor(body.accountId); x.failedPins = 0; x.lockedUntil = 0; x.hardLocked = false; await saveAccount(x); await log("unlocked pin", { target: x.name });
+  } else if (a === "revokeDevices") {
+    const x = await acctFor(body.accountId); x.devices = []; x.tokenVersion = (x.tokenVersion || 0) + 1; await saveAccount(x); await log("signed out all devices", { target: x.name });
+  } else if (a === "makeAdmin" || a === "removeAdmin") {
+    const x = await acctFor(body.accountId); if (x.id === admin.id) throw httpErr(400, "You cannot change your own role.");
+    x.role = a === "makeAdmin" ? "admin" : "participant"; x.tokenVersion = (x.tokenVersion || 0) + 1; await saveAccount(x); await log(a === "makeAdmin" ? "granted admin role" : "removed admin role", { target: x.name });
+  } else if (a === "deleteAccount") {
+    const x = await acctFor(body.accountId); if (x.id === admin.id) throw httpErr(400, "You cannot delete yourself.");
+    await db().delete("acct/" + x.id); await db().delete("email/" + sha(x.email));
+    if (body.deleteData && x.memberId) await saveRecord(x.memberId, normRecord({}));
+    await log("deleted participant (POPIA request)", { target: x.name, detail: body.deleteData ? "account and data" : "account only" });
+  } else if (a === "config") {
+    const c = body.config || {}, cur = await getConfig(), P = {};
+    for (const k of Object.keys(DEFAULT_CONFIG.points)) P[k] = num(c.points?.[k] ?? cur.points[k], -100, 1000);
+    const next = {
+      points: P, treat: { minutes: num(c.treat?.minutes ?? cur.treat.minutes, 30, 1000), kcal: num(c.treat?.kcal ?? cur.treat.kcal, 0, 1000) },
+      pin: { maxAttempts: num(c.pin?.maxAttempts ?? cur.pin.maxAttempts, 3, 10), lockMinutes: num(c.pin?.lockMinutes ?? cur.pin.lockMinutes, 1, 1440), hardLockAfter: num(c.pin?.hardLockAfter ?? cur.pin.hardLockAfter, 5, 50) },
+      water: { target: num(c.water?.target ?? cur.water?.target ?? 8, 1, 20) },
+      sleep: { target: num(c.sleep?.target ?? cur.sleep?.target ?? 7, 4, 12) },
+      autoApprove: !!(c.autoApprove ?? cur.autoApprove), rulesText: str(c.rulesText ?? cur.rulesText, 4000), privacyText: str(c.privacyText ?? cur.privacyText, 6000),
+    };
+    await setJ("_config", next); await log("changed settings and scoring", { detail: JSON.stringify(next.points) });
+  } else if (a === "settings") {
+    if (!isDate(body.start) || !isDate(body.end) || body.end <= body.start) throw httpErr(400, "The end date must be after the start date.");
+    await setJ("_settings", { start: body.start, end: body.end, title: DEFAULT_SETTINGS.title }); await log("changed challenge dates", { detail: body.start + " to " + body.end });
+  } else if (a === "challenge") {
+    const l = await list("_challenges");
+    if (body.remove) { await setJ("_challenges", l.filter((c) => c.id !== body.remove)); await log("removed challenge", { detail: body.remove }); }
+    else {
+      const c = { id: rid(6), title: str(body.title, 80), description: str(body.description, 300), type: ["daily", "weekly", "monthly"].includes(body.type) ? body.type : "daily", start: body.start, end: body.end, points: num(body.points, 0, 500) || 0 };
+      if (!c.title || !isDate(c.start) || !isDate(c.end) || c.end < c.start) throw httpErr(400, "Please give the challenge a title and valid dates.");
+      l.push(c); await setJ("_challenges", l); await log("created challenge", { detail: `${c.title} (${c.type}, ${c.points} pts)` });
+    }
+  } else if (a === "adjust") {
+    const l = await list("_adjustments");
+    if (body.remove) { await setJ("_adjustments", l.filter((x) => x.id !== body.remove)); await log("removed point adjustment", { detail: body.remove }); }
+    else {
+      const x = { id: rid(6), memberId: str(body.memberId, 40), points: num(body.points, -1000, 1000), reason: str(body.reason, 200), date: isDate(body.date) ? body.date : todaySA(), by: admin.name };
+      if (!x.memberId || !x.points || !x.reason) throw httpErr(400, "Choose a participant, the points and a reason.");
+      l.push(x); await setJ("_adjustments", l); await log("adjusted points", { target: x.memberId, detail: `${x.points} pts: ${x.reason}` });
+    }
+  } else if (a === "award") {
+    const l = await list("_manualAwards");
+    if (body.remove) { await setJ("_manualAwards", l.filter((x) => x.id !== body.remove)); await log("revoked medal", { detail: body.remove }); }
+    else {
+      const x = { id: rid(6), memberId: str(body.memberId, 40), award: str(body.award, 40), note: str(body.note, 200), date: todaySA() };
+      if (!x.memberId || !x.award) throw httpErr(400, "Choose a participant and an award.");
+      l.push(x); await setJ("_manualAwards", l); await log("issued medal", { target: x.memberId, detail: x.award });
+    }
+  } else if (a === "announce") {
+    const l = await list("_announcements");
+    if (body.remove) { await setJ("_announcements", l.filter((x) => x.id !== body.remove)); await log("removed announcement"); }
+    else {
+      const x = { id: rid(6), title: str(body.title, 80), message: str(body.message, 600), to: str(body.to, 40) || "all", until: isDate(body.until) ? body.until : null, date: todaySA(), by: admin.name };
+      if (!x.message) throw httpErr(400, "Please write a message.");
+      l.push(x); await setJ("_announcements", l.slice(-200)); await log("sent announcement", { detail: `${x.to}: ${x.title}` });
+    }
+  } else if (a === "weights") {
+    const date = body.date === "start" ? null : body.date;
+    if (date && (!isDate(date) || date > todaySA())) throw httpErr(400, "Please choose a valid weigh in date.");
+    let n = 0;
+    for (const e of body.entries || []) {
+      const kg = num(e.kg, 20, 400); if (!kg || !e.memberId) continue;
+      const r = await getRecord(e.memberId);
+      if (!date) { r.profile.startWeight = kg; r.weights = r.weights.filter((w) => w.date !== "2026-11-14"); r.weights.push({ id: "start-2026-11-14", date: "2026-11-14", kg }); }
+      else { r.weights = r.weights.filter((w) => w.date !== date); r.weights.push({ id: rid(6), date, kg }); }
+      await saveRecord(e.memberId, r); n++;
+    }
+    await log("recorded group weigh in", { detail: `${n} weights for ${date || "starting weights"}` });
+  } else if (a === "profile") {
+    const r = await getRecord(str(body.memberId, 40)), p = body.profile || {};
+    for (const k of ["startWeight", "goalWeight", "beforeWeight"]) if (k in p) r.profile[k] = num(p[k], 10, 400);
+    await saveRecord(str(body.memberId, 40), r); await log("corrected participant record", { target: body.memberId, detail: JSON.stringify(p) });
+  } else throw httpErr(400, "Unknown admin action.");
+  return json(await buildState(admin, { adminView: true }));
+}
+
+export default async (req) => {
+  try {
+    const url = new URL(req.url);
+    const path = url.pathname.replace(/^\/api\/?/, "");
+    const body = req.method === "POST" ? await req.json().catch(() => ({})) : {};
+    if (path.startsWith("auth/")) return await handleAuth(path.slice(5), req, body);
+    if (path === "state" && req.method === "GET") {
+      const acct = await requireSession(req);
+      if (acct.status !== "active") return json({ me: publicAccount(acct), pending: true, settings: await getSettings(), config: { rulesText: (await getConfig()).rulesText } });
+      return json(await buildState(acct));
+    }
+    if (path === "data" && req.method === "POST") return await handleData(req, body);
+    if (path === "admin" && req.method === "POST") return await handleAdmin(req, body);
+    if (path === "public" && req.method === "GET") { const c = await getConfig(); return json({ settings: await getSettings(), rulesText: c.rulesText, privacyText: c.privacyText, avatars: AVATARS }); }
+    return json({ error: "Not found" }, 404);
+  } catch (e) {
+    if (!e.status) console.error(e);
+    return json({ error: e.status ? e.message : "Something went wrong on the server.", ...(e.extra || {}) }, e.status || 500);
+  }
+};
+
+export const config = { path: "/api/*" };

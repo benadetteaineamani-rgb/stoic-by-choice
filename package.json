@@ -1,0 +1,11 @@
+{
+  "name": "stoic-by-choice-biggest-loser",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared weight loss tracker for the Kilo Crew",
+  "dependencies": {
+    "@netlify/blobs": "^11.1.9",
+    "nodemailer": "^7.0.0"
+  }
+}
