@@ -15,6 +15,7 @@ A secure, shared challenge app for the crew: registration with email verificatio
 4. Next time: tap your avatar and type your PIN.
 
 ## 3. Security and privacy
+* **Today only:** everything is logged for today (South African time). The date cannot be changed, missed days cannot be back dated, and past entries cannot be edited or removed. This is enforced by the server. Only the administrator can record official weigh ins for a weigh in Saturday.
 * PINs are stored only as salted scrypt hashes. Easy PINs (1234, 0000…) are refused.
 * 5 wrong PINs lock the account for 15 minutes (adjustable). Forgotten PIN: the administrator uses **Reset PIN**.
 * Points are calculated on the server from `public/core.js`; nobody can enter their own points.
@@ -55,7 +56,31 @@ A secure, shared challenge app for the crew: registration with email verificatio
 
 Under 18s follow the Junior plan (about 0.5 kg a month for ages 6 to 11; at most 0.5 kg a week for teens).
 
-## 6. Awards
+## 6. Food, movement and the coach
+* **Food:** type a food and pick it from the list of about 150 common South African foods; calories are filled in from standard values per serving (approximate, based on USDA FoodData Central reference portions and typical local recipes) and recalculated by the server. Foods not in the list can be added as "your estimate".
+* **Movement:** daily steps (from the phone's Health or Google Fit app), plus distance and steps estimated for walking, running, hiking, cycling and swimming. Step goal 7 500 (+2 points, adjustable).
+* **Coach:** up to three personal nudges on Home (water, sleep, steps, food, journal, getting back on track, and how far behind this week's top effort you are). It never pushes the scale: only official weigh ins count.
+
+## 7. The Grand Finale (sealed results)
+* Two winners, revealed together: the **Biggest Loser** (highest percentage of starting weight lost, using only the weights recorded by the administrator at the official Saturday weigh ins, capped at the safe pace) and the **Most Consistent Participant** for the greatest effort (most healthy habit points: check ins, movement, steps, water, sleep, journal, tasks). The Resilience Challenge Award (most exercise minutes) is revealed first.
+* Until the reveal, everyone (the administrator included) only sees this week's and this month's effort; final standings, totals and leaders are hidden by the server.
+* The reveal happens automatically on 24 April 2027 at 09:00 (South African time), or when the administrator taps **Admin → Settings → Reveal the winners now**. Then open the Board tab together and tap through the ceremony.
+* Weekly and monthly awards count effort only, so nobody's weight can be guessed.
+
+**Prizes:** the Biggest Loser wins the **R10 000 grand prize** and the Most Consistent Participant (greatest effort) wins **R2 000**. Both amounts can be changed in Admin → Settings.
+
+## Easy for everyone (reading and writing not needed)
+* **Big check in button** at the top of Home: one tap checks you in for the day (+5 points), then four big picture buttons: +1 water, journal, steps, food.
+* **Picture journal:** tap a face for your mood and tap pictures of what you did (vegetables, fruit, water, moved, slept well, no fizzy drinks, no sweets, breakfast, smaller portions, helped someone, stayed calm, proud of today). Writing is optional.
+* **Progress tab charts** for the last 7, 14 or 30 days: water, sleep, steps, movement minutes, food calories, mood faces and check ins, each with a goal line and a big average number. Tap a bar to see that day's number.
+
+## 8. Your data is safe when you update
+* All data is kept in Netlify Blobs (site wide store `kilocrew`), which persists across every deploy. Uploading new code to GitHub replaces the app, never the data.
+* New versions of the app read older records safely (missing fields are filled in automatically).
+* Never rename the store in `netlify/functions/api.mjs`.
+* Extra safety: Admin → Reports → **Download full backup** (for example after each weigh in) and **Restore from a backup file** if ever needed. Backups contain health information: keep them private.
+
+## 9. Awards
 Weekly Challenge Award (each Tuesday to Monday week), Monthly Challenge Award (each month), Most Consistent Participant and Resilience Challenge Award (closing ceremony), and the **Biggest Loser Award, presented last** on 24 April 2027. The award images are in `public/img` and are shown unedited.
 
 ## 7. Pre loaded records

@@ -5,9 +5,12 @@
 export const DEFAULT_SETTINGS = { start: "2026-11-17", end: "2027-04-24", title: "Stoic by Choice Biggest Loser Challenge" };
 
 export const DEFAULT_CONFIG = {
-  points: { checkin: 5, exercise: 3, weighin: 10, task: 2, reflect: 2, water: 2, sleep: 2, missed: -10, holiday: 3, perPercent: 100, treatBonus: 15 },
+  points: { checkin: 5, exercise: 3, weighin: 10, task: 2, reflect: 2, water: 2, sleep: 2, steps: 2, missed: -10, holiday: 3, perPercent: 100, treatBonus: 15 },
   water: { target: 8 },
   sleep: { target: 7 },
+  steps: { goal: 7500 },
+  finale: { revealAt: null, revealed: false },
+  prizes: { bl: 10000, effort: 2000 },
   treat: { minutes: 150, kcal: 300 },
   pin: { maxAttempts: 5, lockMinutes: 15, hardLockAfter: 10 },
   autoApprove: false,
@@ -66,7 +69,13 @@ export function todaySA(now = new Date()) {
   return `${g("year")}-${g("month")}-${g("day")}`;
 }
 export const holiday = (d) => HOLIDAYS[d] || null;
-export const emptyRecord = () => ({ profile: {}, foods: [], exercises: [], weights: [], treats: [], tasks: [], reflections: [], challenges: [], water: [], sleep: [] });
+export const emptyRecord = () => ({ profile: {}, foods: [], exercises: [], weights: [], treats: [], tasks: [], reflections: [], challenges: [], water: [], sleep: [], steps: [], checkins: [] });
+// Picture journal: tap what you did today, no writing needed.
+export const JOURNAL_CHECKS = [
+  ["veg", "🥦", "I ate vegetables"], ["fruit", "🍎", "I ate fruit"], ["water", "🥛", "I drank water"], ["moved", "🏃🏾", "I moved my body"],
+  ["slept", "😴", "I slept well"], ["nofizzy", "🚫🥤", "No fizzy drinks"], ["nosweets", "🚫🍬", "No sweets"], ["breakfast", "🍳", "I ate breakfast"],
+  ["smallplate", "🍽️", "Smaller portions"], ["helped", "🤝🏾", "I helped someone"], ["calm", "🧘🏾", "I stayed calm"], ["proud", "💪🏾", "I am proud of today"],
+];
 export const SLEEP_QUALITY = { great: "😴", good: "🙂", okay: "😐", poor: "🥱" };
 export const MOODS = { great: "😄", good: "🙂", okay: "😐", low: "😔", tough: "😣" };
 export function normRecord(r) { const e = emptyRecord(); r = r || {}; for (const k of Object.keys(e)) if (!r[k]) r[k] = e[k]; return r; }
@@ -83,6 +92,10 @@ export function makeEngine(ctx) {
   const waterTarget = () => ((ctx.config() || {}).water || DEFAULT_CONFIG.water).target || 8;
   const sleepTarget = (r) => Math.max(((ctx.config() || {}).sleep || DEFAULT_CONFIG.sleep).target || 7, r && r.profile && r.profile.age && r.profile.age < 18 ? 8 : 0);
   const sleepOn = (r, d) => (r.sleep || []).find((x) => x.date === d) || null;
+  const stepGoal = () => ((ctx.config() || {}).steps || DEFAULT_CONFIG.steps).goal || 7500;
+  /** Steps for a day: the phone's daily total if logged, otherwise steps recorded with activities. */
+  const daySteps = (r, d) => { const x = (r.steps || []).find((s) => s.date === d); return x ? x.steps : r.exercises.filter((e) => e.date === d).reduce((a, e) => a + (e.steps || 0), 0); };
+  const dayKm = (r, d) => { const k = r.exercises.filter((e) => e.date === d).reduce((a, e) => a + (e.distanceKm || 0), 0); return k || Math.round(daySteps(r, d) * 0.00075 * 10) / 10; };
   const glasses = (r, d) => ((r.water || []).find((x) => x.date === d) || {}).glasses || 0;
   const today = () => ctx.today();
   const defs = () => (ctx.challengeDefs ? ctx.challengeDefs() : []) || [];
@@ -101,6 +114,9 @@ export function makeEngine(ctx) {
   const startWeight = (r) => { if (r.profile.startWeight) return r.profile.startWeight; const w = sortByDate(r.weights); return w.length ? w[0].kg : null; };
   const weightOn = (r, d) => { const w = sortByDate(r.weights).filter((x) => x.date <= d); return w.length ? w[w.length - 1].kg : startWeight(r); };
   const latestWeight = (r) => weightOn(r, "9999-12-31");
+  /** Official weight: the latest weight recorded by the administrator at or before d (or the starting weight). */
+  const officialWeightOn = (r, d) => { const w = sortByDate(r.weights).filter((x) => x.verified && x.date <= d); return w.length ? w[w.length - 1].kg : startWeight(r); };
+  const hasOfficial = (r) => r.weights.some((x) => x.verified && weighDays().includes(x.date));
   const isMinor = (r) => !!(r.profile.age && r.profile.age < 18);
   const isChild = (r) => !!(r.profile.age && r.profile.age < 12);
   const habitsOnly = (r) => isMinor(r) && r.profile.kidPlan === "habits";
@@ -133,11 +149,13 @@ export function makeEngine(ctx) {
     const task = r.tasks.some((x) => x.date === d), reflect = r.reflections.some((x) => x.date === d), chal = r.challenges.some((x) => x.date === d);
     const g = glasses(r, d), water = g > 0, waterGoal = g >= waterTarget();
     const sl = sleepOn(r, d), slept = !!sl, sleepGoal = !!sl && sl.hours >= sleepTarget(r);
-    return { food, ex, wt, task, reflect, chal, water, waterGoal, glasses: g, slept, sleepGoal, any: food || ex || wt || task || reflect || chal || water || slept };
+    const stp = daySteps(r, d), stepsGoal = stp >= stepGoal(), wtv = r.weights.some((x) => x.date === d && x.verified);
+    const checkin = (r.checkins || []).some((x) => x.date === d);
+    return { food, ex, wt, wtv, task, reflect, chal, water, waterGoal, glasses: g, slept, sleepGoal, steps: stp, stepsGoal, checkin, any: checkin || food || ex || wt || task || reflect || chal || water || slept || stp > 0 };
   }
   function dayPoints(r, d, t = today()) {
     const st = dayStatus(r, d), p = P();
-    if (st.any) return p.checkin + (st.ex ? p.exercise : 0) + (st.wt && isWeighDay(d) ? p.weighin : 0) + (st.task ? p.task : 0) + (st.reflect ? p.reflect : 0) + (st.waterGoal ? p.water : 0) + (st.sleepGoal ? p.sleep : 0) + (holiday(d) ? p.holiday : 0);
+    if (st.any) return p.checkin + (st.ex ? p.exercise : 0) + (st.wtv && isWeighDay(d) ? p.weighin : 0) + (st.task ? p.task : 0) + (st.reflect ? p.reflect : 0) + (st.waterGoal ? p.water : 0) + (st.sleepGoal ? p.sleep : 0) + (st.stepsGoal ? p.steps : 0) + (holiday(d) ? p.holiday : 0);
     return d < t && !holiday(d) && !beforeJoin(r, d) ? p.missed : 0;
   }
   // Nobody is penalised for days before they joined the challenge.
@@ -210,8 +228,8 @@ export function makeEngine(ctx) {
     let pts = 0;
     wds.filter((x) => x >= a && x <= b && x <= t).forEach((wd) => {
       const prevWd = wds.filter((x) => x < wd).pop();
-      const prevW = prevWd ? weightOn(r, prevWd) : sw;
-      const cur = (r.weights.find((x) => x.date === wd) || {}).kg;
+      const prevW = prevWd ? officialWeightOn(r, prevWd) : sw;
+      const cur = (r.weights.find((x) => x.date === wd && x.verified) || {}).kg;
       if (sw && prevW && cur) { const lost = Math.min(prevW - cur, maxRate(r) * 2); pts += Math.round((lost / sw) * 100 * P().perPercent); }
     });
     return pts;
@@ -220,7 +238,8 @@ export function makeEngine(ctx) {
     const s = S(), t = today();
     let pts = 0;
     for (let d = a < s.start ? s.start : a; d <= b && d <= t && d <= s.end; d = addDays(d, 1)) pts += dayPoints(r, d, t);
-    return pts + weightPeriodPoints(r, a, b) + challengePoints(r, a, b) + adjustmentsFor(memberId, a, b);
+    // Weekly and monthly awards are for effort only: weight points are kept out so nobody's weight can be guessed.
+    return pts + challengePoints(r, a, b) + adjustmentsFor(memberId, a, b);
   }
 
   function score(r, memberId) {
@@ -237,7 +256,7 @@ export function makeEngine(ctx) {
     let d = dayStatus(r, t).any ? t : addDays(t, -1);
     while (d >= s.start && (dayStatus(r, d).any || holiday(d))) { if (dayStatus(r, d).any) streak++; d = addDays(d, -1); }
     const lw = lastWeighDay(last);
-    const sw = startWeight(r), cw = lw ? weightOn(r, lw) : sw;
+    const sw = startWeight(r), cw = lw ? officialWeightOn(r, lw) : sw;
     const lostKg = sw && cw ? sw - cw : 0;
     const pct = sw ? (lostKg / sw) * 100 : 0;
     const minor = isMinor(r), habits = habitsOnly(r);
@@ -246,7 +265,8 @@ export function makeEngine(ctx) {
     const weightPts = habits || t < s.start ? 0 : Math.round((sw ? (countedKg / sw) * 100 : 0) * p.perPercent);
     const tooFast = diffDays(s.start, last) >= 13 && lostKg > safeKg;
     const goal = r.profile.goalWeight && sw && sw > r.profile.goalWeight ? Math.min(100, Math.max(0, (lostKg / (sw - r.profile.goalWeight)) * 100)) : null;
-    return { id: memberId, habit, checkins, missed, streak, sw, cw, lostKg, pct, weightPts, total: habit + weightPts, minor, habits, tooFast, goal, treats: tr, rewards: sw ? Math.max(0, Math.floor(pct / 2.5)) : 0 };
+    const pctSafe = sw ? (countedKg / sw) * 100 : 0; // final Biggest Loser measure: % lost at official weigh ins, capped at the safe pace
+    return { id: memberId, pctSafe, official: hasOfficial(r), habit, checkins, missed, streak, sw, cw, lostKg, pct, weightPts, total: habit + weightPts, minor, habits, tooFast, goal, treats: tr, rewards: sw ? Math.max(0, Math.floor(pct / 2.5)) : 0 };
   }
 
   function bestStreak(r) {
@@ -301,6 +321,7 @@ export function makeEngine(ctx) {
         weighIns: weighDays().filter((d) => r.weights.some((x) => x.date === d)).length,
         weekAllIn: ws.map((w) => (w.from > t ? null : w.allIn)),
         waterGoalDays: new Set(r.water.filter((x) => x.date >= s.start && x.glasses >= waterTarget()).map((x) => x.date)).size,
+        stepGoalDays: (() => { let n = 0; for (let d = s.start; d <= t && d <= s.end; d = addDays(d, 1)) if (daySteps(r, d) >= stepGoal()) n++; return n; })(),
         sleepGoalDays: new Set(r.sleep.filter((x) => x.date >= s.start && x.hours >= sleepTarget(r)).map((x) => x.date)).size,
         journalDays: new Set(r.reflections.filter((x) => x.date >= s.start).map((x) => x.date)).size,
         tasksThisWeek: (() => { const cw = currentWeek(); return r.tasks.filter((x) => x.date >= cw.w0 && x.date <= cw.w1).length; })(),
@@ -310,11 +331,13 @@ export function makeEngine(ctx) {
     const weeksRes = cws.map((w) => ({ ...w, done: w.w1 < t, ...winners((id) => summaries[id].weekPts[w.n]) }));
     const monthsRes = ms.map((m) => ({ ...m, done: m.to < t, ...winners((id) => summaries[id].monthPts[m.key]) }));
     const leaders = (metric) => { const v = ids.map((id) => ({ id, v: metric(id) })); const top = Math.max(-Infinity, ...v.map((x) => x.v)); return top > 0 ? v.filter((x) => x.v === top).map((x) => x.id) : []; };
-    const consistent = leaders((id) => summaries[id].checkins * 1000 + summaries[id].exerciseDays);
+    // Greatest Effort: the most points from healthy habits (check ins, movement, steps, water, sleep, journal, tasks); weight not included.
+    const consistent = leaders((id) => summaries[id].habit * 1000 + summaries[id].checkins);
     const resilience = leaders((id) => summaries[id].exerciseMinutes);
     const ranking = [...ids].sort((a, b) => summaries[b].total - summaries[a].total || summaries[b].checkins - summaries[a].checkins);
-    const eligible = ranking.filter((id) => !summaries[id].habits);
-    const biggestLoser = eligible.length && (summaries[eligible[0]].total > 0 || summaries[eligible[0]].lostKg > 0) ? eligible[0] : null;
+    // Biggest Loser: the highest percentage of starting weight lost at the official (administrator recorded) weigh ins.
+    const blRank = ids.filter((id) => !summaries[id].habits && summaries[id].official).sort((a, b) => summaries[b].pctSafe - summaries[a].pctSafe);
+    const biggestLoser = blRank.length && summaries[blRank[0]].pctSafe > 0 ? blRank[0] : null;
     const over = t > s.end;
     for (const id of ids) {
       const x = summaries[id];
@@ -325,13 +348,14 @@ export function makeEngine(ctx) {
       x.isBL = biggestLoser === id;
       x.over = over;
     }
-    return { summaries, results: { weeks: weeksRes, months: monthsRes, consistent, resilience, biggestLoser, ranking, over } };
+    const effortRank = [...ids].sort((a, b) => summaries[b].habit - summaries[a].habit);
+    return { summaries, results: { weeks: weeksRes, months: monthsRes, consistent, resilience, biggestLoser, ranking, blRank, effortRank, over } };
   }
 
   return {
     weighDays, isWeighDay, nextWeighDay, lastWeighDay, startWeight, weightOn, latestWeight, isMinor, isChild, habitsOnly, maxRate, planRate,
     calorieFloor, energy, dayTotals, dayStatus, dayPoints, challengeWeeks, currentWeek, challengeMonths, weeks, treats, score, periodScore,
-    bestStreak, challengeDay, computeAll, P, T, glasses, waterTarget, sleepTarget, sleepOn,
+    bestStreak, challengeDay, computeAll, P, T, glasses, waterTarget, sleepTarget, sleepOn, stepGoal, daySteps, dayKm, officialWeightOn,
   };
 }
 
@@ -342,6 +366,7 @@ export const BADGES = {
   consistency: { label: "Consistency Star", test: (a) => a.bestStreak >= 7, how: "Check in 7 days in a row." },
   movement: { label: "Movement Hero", test: (a) => a.maxWeekMins >= 150, how: "Exercise 150 minutes in one challenge week." },
   hydration: { label: "Hydration Hero", test: (a) => a.waterGoalDays >= 7, how: "Reach your water goal on 7 days." },
+  steps: { label: "Step Master", test: (a) => a.stepGoalDays >= 7, how: "Reach your daily step goal on 7 days." },
   sleep: { label: "Well Rested", test: (a) => a.sleepGoalDays >= 7, how: "Reach your sleep goal on 7 nights." },
   journal: { label: "Thoughtful Stoic", test: (a) => a.journalDays >= 7, how: "Write in your journal on 7 days." },
   healthy: { label: "Healthy Choice", test: (a) => a.foodDays >= 7, how: "Log your food on 7 different days." },
@@ -350,11 +375,14 @@ export const BADGES = {
   discipline: { label: "Discipline Champion", test: (a) => a.bestStreak >= 14, how: "Check in 14 days in a row." },
   team: { label: "Team Player", test: (a) => a.weighIns >= 3, how: "Attend 3 official Saturday weigh ins." },
   transformation: { label: "Biggest Transformation", test: (a) => a.pct >= 5, how: "Lose 5% of your starting weight." },
-  bl: { label: "Biggest Loser Award", test: (a) => a.isBL && a.over, lead: (a) => a.isBL, how: "Finish the challenge with the highest score." },
+  bl: { label: "Biggest Loser Award", test: (a) => a.isBL && a.over, lead: (a) => a.isBL, how: "Lose the highest percentage of your starting weight, measured at the official weigh ins. Revealed at the Grand Finale." },
   resilienceAward: { label: "Resilience Challenge Award", test: (a) => a.isResilience && a.over, lead: (a) => a.isResilience, how: "Log the most exercise minutes by the end of the challenge." },
-  consistentAward: { label: "Most Consistent Participant", test: (a) => a.isConsistent && a.over, lead: (a) => a.isConsistent, how: "Check in on the most days by the end of the challenge." },
+  consistentAward: { label: "Most Consistent Participant · Greatest Effort", test: (a) => a.isConsistent && a.over, lead: (a) => a.isConsistent, how: "Earn the most points from healthy habits: movement, steps, water, sleep, journal and check ins. Revealed at the Grand Finale." },
   grand: { label: "Grand Champion", test: (a) => a.isBL && a.over, how: "Win the Biggest Loser Award at the end of the challenge." },
 };
 
 // Fields of a summary that reveal health information; removed before sharing with other participants.
-export const PRIVATE_FIELDS = ["sw", "cw", "lostKg", "pct", "goal", "rewards", "tooFast", "weightPts", "minor", "habits"];
+export const PRIVATE_FIELDS = ["sw", "cw", "lostKg", "pct", "pctSafe", "goal", "rewards", "tooFast", "weightPts", "minor", "habits", "official"];
+// Fields that would give away the final results; hidden from everyone until the Grand Finale reveal.
+export const SEALED_FIELDS = ["total", "habit", "isBL", "isConsistent", "isResilience", "exerciseMinutes"];
+export function finaleTime(settings, config) { const f = (config && config.finale) || {}; return f.revealAt || `${settings.end}T09:00:00+02:00`; }

@@ -1,0 +1,187 @@
+// Standard calorie counts per typical serving, used to fill in calories automatically.
+// Values are approximate, based on USDA FoodData Central reference portions and typical
+// South African products and recipes. Packaged foods vary: the label is always the most accurate.
+// [id, name, serving, kcal, category]
+const RAW = [
+  // Starches and grains
+  ["pap", "Pap (stiff maize porridge)", "1 cup (240 g)", 230, "Starches"],
+  ["softpap", "Soft maize porridge", "1 cup", 150, "Starches"],
+  ["samp", "Samp", "1 cup cooked", 210, "Starches"],
+  ["sampbeans", "Samp and beans (umngqusho)", "1 cup", 250, "Starches"],
+  ["rice", "White rice", "1 cup cooked", 205, "Starches"],
+  ["brownrice", "Brown rice", "1 cup cooked", 218, "Starches"],
+  ["pasta", "Pasta / spaghetti", "1 cup cooked", 220, "Starches"],
+  ["potato", "Potato, boiled", "1 medium", 130, "Starches"],
+  ["sweetpotato", "Sweet potato, boiled", "1 medium", 115, "Starches"],
+  ["mash", "Mashed potato", "1 cup", 230, "Starches"],
+  ["chips", "Chips / fries", "medium portion", 365, "Starches"],
+  ["slapchips", "Slap chips", "small portion", 400, "Starches"],
+  ["whitebread", "White bread", "1 slice", 80, "Starches"],
+  ["brownbread", "Brown bread", "1 slice", 75, "Starches"],
+  ["wholewheat", "Wholewheat / seed bread", "1 slice", 70, "Starches"],
+  ["roll", "Bread roll", "1 roll", 150, "Starches"],
+  ["vetkoek", "Vetkoek, plain", "1", 300, "Starches"],
+  ["vetkoekmince", "Vetkoek with mince", "1", 450, "Starches"],
+  ["dumpling", "Dumpling / steamed bread (ujeqe)", "1 slice", 150, "Starches"],
+  ["roti", "Roti / chapati", "1", 200, "Starches"],
+  ["mealie", "Mealie (corn on the cob)", "1 medium", 90, "Starches"],
+  ["oats", "Oats porridge (made with water)", "1 cup", 160, "Starches"],
+  ["weetbix", "Weet-Bix", "2 biscuits", 120, "Starches"],
+  ["cornflakes", "Cornflakes", "1 cup", 110, "Starches"],
+  ["muesli", "Muesli / granola", "½ cup", 210, "Starches"],
+  ["rusk", "Rusk", "1", 150, "Starches"],
+  ["spagbol", "Spaghetti bolognese", "1 plate", 550, "Starches"],
+
+  // Meat, fish, eggs and beans
+  ["chickenbreast", "Chicken breast, grilled (no skin)", "100 g", 165, "Protein"],
+  ["chickenroast", "Roast chicken leg (with skin)", "1 leg quarter", 300, "Protein"],
+  ["friedchicken", "Fried chicken", "1 piece", 280, "Protein"],
+  ["chickenstew", "Chicken stew / curry", "1 cup", 300, "Protein"],
+  ["livers", "Chicken livers", "100 g", 170, "Protein"],
+  ["mince", "Beef mince, cooked", "100 g", 250, "Protein"],
+  ["beefstew", "Beef stew / curry", "1 cup", 300, "Protein"],
+  ["steak", "Steak, grilled", "150 g", 310, "Protein"],
+  ["boerewors", "Boerewors", "100 g", 290, "Protein"],
+  ["lambchop", "Lamb chop, grilled", "1 chop", 230, "Protein"],
+  ["porkchop", "Pork chop, grilled", "1 chop", 230, "Protein"],
+  ["mogodu", "Tripe (mogodu)", "1 cup", 200, "Protein"],
+  ["hake", "Hake, grilled", "150 g", 140, "Protein"],
+  ["friedfish", "Fried fish (battered)", "1 piece", 300, "Protein"],
+  ["pilchards", "Pilchards in tomato sauce", "½ can", 300, "Protein"],
+  ["tuna", "Tuna in water, drained", "1 small can", 130, "Protein"],
+  ["egg", "Egg, boiled or poached", "1 large", 78, "Protein"],
+  ["friedegg", "Egg, fried", "1 large", 90, "Protein"],
+  ["scrambled", "Scrambled eggs", "2 eggs", 200, "Protein"],
+  ["polony", "Polony", "2 slices", 90, "Protein"],
+  ["vienna", "Viennas", "2", 250, "Protein"],
+  ["bacon", "Bacon", "2 rashers", 90, "Protein"],
+  ["sugarbeans", "Sugar beans, cooked", "½ cup", 120, "Protein"],
+  ["bakedbeans", "Baked beans", "½ can", 165, "Protein"],
+  ["lentils", "Lentils, cooked", "½ cup", 115, "Protein"],
+  ["chickpeas", "Chickpeas, cooked", "½ cup", 135, "Protein"],
+  ["biltong", "Biltong", "30 g", 100, "Protein"],
+  ["droewors", "Droëwors", "30 g", 160, "Protein"],
+
+  // Dairy
+  ["milkfull", "Milk, full cream", "250 ml", 160, "Dairy"],
+  ["milklow", "Milk, low fat (2%)", "250 ml", 125, "Dairy"],
+  ["milkskim", "Milk, fat free", "250 ml", 90, "Dairy"],
+  ["amasi", "Amasi / maas", "250 ml", 160, "Dairy"],
+  ["yoghurtplain", "Yoghurt, plain low fat", "175 g tub", 110, "Dairy"],
+  ["yoghurtfruit", "Yoghurt, flavoured", "175 g tub", 170, "Dairy"],
+  ["cheese", "Cheddar cheese", "30 g (matchbox)", 120, "Dairy"],
+
+  // Vegetables
+  ["chakalaka", "Chakalaka", "½ cup", 90, "Vegetables"],
+  ["morogo", "Morogo / spinach with oil", "½ cup", 60, "Vegetables"],
+  ["cabbage", "Cabbage, cooked", "½ cup", 50, "Vegetables"],
+  ["salad", "Mixed salad, no dressing", "1 bowl", 50, "Vegetables"],
+  ["saladdressed", "Salad with dressing", "1 bowl", 150, "Vegetables"],
+  ["coleslaw", "Coleslaw", "½ cup", 150, "Vegetables"],
+  ["potatosalad", "Potato salad", "½ cup", 180, "Vegetables"],
+  ["beetroot", "Beetroot salad", "½ cup", 60, "Vegetables"],
+  ["butternut", "Butternut, cooked", "1 cup", 80, "Vegetables"],
+  ["pumpkinsweet", "Pumpkin with sugar / butter", "1 cup", 150, "Vegetables"],
+  ["carrots", "Carrots, cooked", "½ cup", 30, "Vegetables"],
+  ["greenbeans", "Green beans", "½ cup", 20, "Vegetables"],
+  ["broccoli", "Broccoli", "1 cup", 30, "Vegetables"],
+  ["tomato", "Tomato", "1 medium", 20, "Vegetables"],
+  ["avocado", "Avocado", "½ medium", 120, "Vegetables"],
+
+  // Fruit
+  ["apple", "Apple", "1 medium", 95, "Fruit"],
+  ["banana", "Banana", "1 medium", 105, "Fruit"],
+  ["orange", "Orange", "1 medium", 60, "Fruit"],
+  ["naartjie", "Naartjie", "1", 45, "Fruit"],
+  ["pear", "Pear", "1 medium", 100, "Fruit"],
+  ["peach", "Peach", "1 medium", 60, "Fruit"],
+  ["grapes", "Grapes", "1 cup", 105, "Fruit"],
+  ["mango", "Mango", "1 cup", 100, "Fruit"],
+  ["pawpaw", "Pawpaw / papaya", "1 cup", 60, "Fruit"],
+  ["watermelon", "Watermelon", "1 cup", 45, "Fruit"],
+  ["pineapple", "Pineapple", "1 cup", 80, "Fruit"],
+  ["strawberries", "Strawberries", "1 cup", 50, "Fruit"],
+  ["guava", "Guava", "1", 40, "Fruit"],
+  ["litchis", "Litchis", "10", 65, "Fruit"],
+  ["driedfruit", "Dried fruit", "30 g", 80, "Fruit"],
+
+  // Snacks and treats
+  ["crisps", "Crisps", "small packet (36 g)", 190, "Snacks"],
+  ["crispsbig", "Crisps", "large packet (125 g)", 650, "Snacks"],
+  ["chocbar", "Chocolate bar", "1 bar (55 g)", 255, "Snacks"],
+  ["chocslab", "Chocolate slab", "80 g", 430, "Snacks"],
+  ["mariebiscuits", "Marie biscuits", "2", 70, "Snacks"],
+  ["cookies", "Chocolate chip biscuits", "2", 150, "Snacks"],
+  ["muffin", "Muffin", "1", 400, "Snacks"],
+  ["doughnut", "Doughnut", "1", 270, "Snacks"],
+  ["koeksister", "Koeksister", "1", 220, "Snacks"],
+  ["scone", "Scone with jam and cream", "1", 350, "Snacks"],
+  ["cake", "Cake", "1 slice", 350, "Snacks"],
+  ["icecream", "Ice cream", "2 scoops", 270, "Snacks"],
+  ["popcorn", "Popcorn, air popped", "2 cups", 60, "Snacks"],
+  ["peanuts", "Peanuts / mixed nuts", "small handful (30 g)", 175, "Snacks"],
+  ["sweets", "Sweets / jelly beans", "30 g", 100, "Snacks"],
+
+  // Takeaways and meals
+  ["kota", "Kota (quarter loaf with chips, polony, cheese)", "1", 1000, "Takeaways"],
+  ["bunny", "Bunny chow (quarter)", "1", 900, "Takeaways"],
+  ["burger", "Burger", "1", 500, "Takeaways"],
+  ["cheeseburger", "Cheeseburger", "1", 550, "Takeaways"],
+  ["pizza", "Pizza", "1 slice", 250, "Takeaways"],
+  ["worsroll", "Wors roll", "1", 450, "Takeaways"],
+  ["wrap", "Chicken wrap", "1", 450, "Takeaways"],
+  ["sandwich", "Sandwich (cheese and tomato)", "2 slices", 300, "Takeaways"],
+  ["toastie", "Toasted sandwich", "1", 380, "Takeaways"],
+  ["pie", "Pie (steak or chicken)", "1", 450, "Takeaways"],
+  ["sausageroll", "Sausage roll", "1", 300, "Takeaways"],
+  ["samoosa", "Samoosa", "1", 130, "Takeaways"],
+  ["springroll", "Spring roll", "1", 150, "Takeaways"],
+  ["chickenmeal", "Fried chicken meal (2 pieces and chips)", "1 meal", 850, "Takeaways"],
+
+  // Drinks
+  ["water", "Water", "1 glass", 0, "Drinks"],
+  ["rooibos", "Rooibos or tea, no sugar", "1 cup", 2, "Drinks"],
+  ["teasugar", "Tea with milk and 2 sugars", "1 cup", 50, "Drinks"],
+  ["coffeeblack", "Coffee, black", "1 cup", 2, "Drinks"],
+  ["coffeesugar", "Coffee with milk and 2 sugars", "1 cup", 55, "Drinks"],
+  ["cappuccino", "Cappuccino", "medium", 130, "Drinks"],
+  ["hotchoc", "Hot chocolate", "1 mug", 200, "Drinks"],
+  ["coke", "Fizzy drink", "330 ml can", 139, "Drinks"],
+  ["coke500", "Fizzy drink", "500 ml", 210, "Drinks"],
+  ["diet", "Diet / zero fizzy drink", "330 ml", 1, "Drinks"],
+  ["juice", "Fruit juice", "250 ml", 115, "Drinks"],
+  ["cordial", "Cordial / squash, diluted", "250 ml", 60, "Drinks"],
+  ["mageu", "Mageu", "500 ml", 275, "Drinks"],
+  ["smoothie", "Smoothie", "300 ml", 250, "Drinks"],
+  ["energy", "Energy drink", "250 ml", 110, "Drinks"],
+  ["beer", "Beer", "340 ml", 145, "Drinks"],
+  ["cider", "Cider", "330 ml", 160, "Drinks"],
+  ["wine", "Wine", "1 glass (150 ml)", 125, "Drinks"],
+  ["spirits", "Spirits", "1 tot (25 ml)", 55, "Drinks"],
+
+  // Extras
+  ["butter", "Butter / margarine", "1 teaspoon", 35, "Extras"],
+  ["oil", "Cooking oil", "1 tablespoon", 120, "Extras"],
+  ["mayo", "Mayonnaise", "1 tablespoon", 95, "Extras"],
+  ["tomsauce", "Tomato sauce", "1 tablespoon", 20, "Extras"],
+  ["gravy", "Gravy", "¼ cup", 30, "Extras"],
+  ["atchar", "Atchar", "1 tablespoon", 60, "Extras"],
+  ["sugar", "Sugar", "1 teaspoon", 16, "Extras"],
+  ["honey", "Honey", "1 teaspoon", 21, "Extras"],
+  ["jam", "Jam", "1 tablespoon", 55, "Extras"],
+  ["peanutbutter", "Peanut butter", "1 tablespoon", 95, "Extras"],
+];
+
+export const FOODS = RAW.map(([id, name, serving, kcal, cat]) => ({ id, name, serving, kcal, cat }));
+export const FOOD_BY_ID = Object.fromEntries(FOODS.map((f) => [f.id, f]));
+export const SERVINGS = [0.5, 1, 1.5, 2, 3];
+export function searchFoods(q, limit = 8) {
+  q = String(q || "").toLowerCase().trim();
+  if (!q) return [];
+  const words = q.split(/\s+/);
+  return FOODS.map((f) => {
+    const n = (f.name + " " + f.cat).toLowerCase();
+    if (!words.every((w) => n.includes(w))) return null;
+    return { f, s: n.startsWith(q) ? 0 : n.includes(" " + q) ? 1 : 2 };
+  }).filter(Boolean).sort((a, b) => a.s - b.s || a.f.name.length - b.f.name.length).slice(0, limit).map((x) => x.f);
+}

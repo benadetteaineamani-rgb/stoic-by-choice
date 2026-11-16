@@ -1,7 +1,8 @@
 /* Stoic by Choice · Biggest Loser Challenge (participant and admin app)
    Talks to the secure API in netlify/functions/api.mjs. Points, rankings and awards are calculated on the
    server with the same rules file (core.js) that this app uses for display. */
-import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BADGES, HOLIDAYS, MOODS, SLEEP_QUALITY, KCAL_PER_KG, todaySA, addDays, diffDays, pad, dow, holiday, emptyRecord, normRecord } from "./core.js";
+import { FOODS, FOOD_BY_ID, SERVINGS, searchFoods } from "./foods.js";
+import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BADGES, HOLIDAYS, MOODS, SLEEP_QUALITY, JOURNAL_CHECKS, KCAL_PER_KG, todaySA, addDays, diffDays, pad, dow, holiday, emptyRecord, normRecord } from "./core.js";
 
 (() => {
   "use strict";
@@ -27,12 +28,13 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
   ];
 
   // MET values, approximated from the Compendium of Physical Activities.
+  // [name, MET (Compendium of Physical Activities), typical speed km/h (0 = no distance), steps per km (0 = no steps)]
   const ACTIVITIES = [
-    ["Walking, moderate pace", 3.5], ["Walking, brisk", 4.3], ["Hiking", 6.0], ["Jogging", 7.0],
-    ["Running, 10 km/h", 9.8], ["Cycling, leisurely", 4.0], ["Cycling, moderate", 8.0], ["Swimming, leisurely", 6.0],
-    ["Aerobics / dance class", 7.3], ["Social dancing", 4.5], ["Skipping rope", 11.8], ["Strength training", 3.5],
-    ["Strength training, vigorous", 6.0], ["Yoga / stretching", 2.5], ["Soccer / netball, casual", 7.0],
-    ["Stair climbing", 4.0], ["Gardening", 3.8], ["House cleaning", 3.3],
+    ["Walking, moderate pace", 3.5, 4.8, 1300], ["Walking, brisk", 4.3, 5.6, 1250], ["Hiking", 6.0, 4.0, 1400], ["Jogging", 7.0, 8.0, 1100],
+    ["Running, 10 km/h", 9.8, 10, 1000], ["Cycling, leisurely", 4.0, 15, 0], ["Cycling, moderate", 8.0, 20, 0], ["Swimming, leisurely", 6.0, 2, 0],
+    ["Aerobics / dance class", 7.3, 0, 0], ["Social dancing", 4.5, 0, 0], ["Skipping rope", 11.8, 0, 0], ["Strength training", 3.5, 0, 0],
+    ["Strength training, vigorous", 6.0, 0, 0], ["Yoga / stretching", 2.5, 0, 0], ["Soccer / netball, casual", 7.0, 0, 0],
+    ["Stair climbing", 4.0, 0, 0], ["Gardening", 3.8, 0, 0], ["House cleaning", 3.3, 0, 0],
   ];
 
   // Stoic motivation. Translations: Marcus Aurelius (George Long, 1862), Seneca (R. M. Gummere, 1917), Epictetus (George Long, 1890).
@@ -131,6 +133,7 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
     state.manualAwards = data.manualAwards || [];
     state.announcements = data.announcements || [];
     state.aggregates = data.aggregates || null;
+    state.finale = data.finale || state.finale || { revealed: false, revealAt: null };
     if (data.admin) state.admin = data.admin;
     state.online = true; state.lastSync = new Date();
   }
@@ -175,7 +178,7 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
   // ---------- Rules engine (the same code the server uses for the official points) ----------
   const E = makeEngine({ settings, config: () => state.config, today: todayStr, challengeDefs: () => state.challenges, adjustments: () => [] });
   const { weighDays, isWeighDay, nextWeighDay, lastWeighDay, startWeight, weightOn, latestWeight, isMinor, isChild, habitsOnly, maxRate,
-    planRate, calorieFloor, energy, dayTotals, dayStatus, dayPoints, weeks, treats, challengeDay, challengeWeeks, currentWeek, challengeMonths, glasses, waterTarget, sleepTarget, sleepOn } = E;
+    planRate, calorieFloor, energy, dayTotals, dayStatus, dayPoints, weeks, treats, challengeDay, challengeWeeks, currentWeek, challengeMonths, glasses, waterTarget, sleepTarget, sleepOn, stepGoal, daySteps, dayKm, officialWeightOn } = E;
   const treatOn = (r, d) => (r.treats || []).some((t) => t.date === d);
   const sortByDate = (arr) => [...arr].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const ZERO = {
@@ -404,11 +407,12 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
     tickCountdown();
   }
 
+  // Logging is always for today: the date cannot be changed and missed days cannot be back dated.
   function dateNav() {
-    return `<div class="datenav"><button data-nav="-1" aria-label="Previous day">‹</button>
-      <input type="date" id="dateInput" value="${state.date}" max="${todayStr()}">
-      <button data-nav="1" aria-label="Next day" ${state.date >= todayStr() ? "disabled" : ""}>›</button></div>`;
+    state.date = todayStr();
+    return `<span class="todaychip">📅 Today · ${fmtDate(state.date, { weekday: "short", day: "numeric", month: "short" })}</span>`;
   }
+
 
   function ring(eaten, budget) {
     const pct = budget > 0 ? Math.min(1, eaten / budget) : 0;
@@ -458,17 +462,23 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
     const items = [
       [st.ex, "Complete a movement activity", `+${POINTS.exercise}`, `data-go="move"`],
       [st.task, `Healthy habit: ${task}`, `+${POINTS.task}`, `data-hs="task" data-date="${d}"`],
-      [st.reflect, refl ? `Journal ${refl.mood ? MOODS[refl.mood] : "✓"} “${refl.text.slice(0, 50)}${refl.text.length > 50 ? "…" : ""}”` : "Write in your journal", `+${POINTS.reflect}`, `data-go="journal"`],
-      isWeighDay(d) ? [st.wt, "⚖️ Official weigh in today", `+${POINTS.weighin}`, `data-go="me"`] : null,
+      [st.reflect, refl ? `📓 Journal done ${refl.mood ? MOODS[refl.mood] : ""} ${(refl.checks || []).map((c) => (JOURNAL_CHECKS.find((j) => j[0] === c) || [, ""])[1]).slice(0, 5).join("")}` : "📓 Journal: tap what you did today", `+${POINTS.reflect}`, `data-go="journal"`],
+      isWeighDay(d) ? [st.wtv, st.wtv ? "⚖️ Official weigh in recorded" : "⚖️ Official weigh in today: see the administrator", `+${POINTS.weighin}`, `data-go="me"`] : null,
     ].filter(Boolean);
     const core3 = items.slice(0, 3).filter((x) => x[0]).length, g = glasses(r, d), wt = waterTarget();
     return `<section class="card">
       <div class="row between"><h2>${isToday ? "Today's activities" : "Activities for " + shortDate(d)}</h2><span class="pill ${pts < 0 ? "warn" : pts > 0 ? "good" : ""}">${pts > 0 ? "+" : ""}${pts} pts</span></div>
-      <div class="water-row ${g >= wt ? "done" : ""}"><span class="drop">${glassSvg(true)}</span><div class="grow"><b>${g} of ${wt}</b> glasses of water<div class="bar"><i style="width:${Math.min(100, (g / wt) * 100)}%;background:linear-gradient(90deg,#5AA9E6,#9BD8FF)"></i></div></div>
-        <button class="wbtn" data-water="-1" aria-label="One glass less" ${g ? "" : "disabled"}>−</button><button class="wbtn plus" data-water="1" aria-label="One more glass">+</button></div>
-      ${(() => { const sl = sleepOn(r, d), stg = sleepTarget(r); return `<div class="sleep-row ${sl && sl.hours >= stg ? "done" : ""}" data-go="sleep" role="button" tabindex="0"><span class="moon">🌙</span><div class="grow">${sl ? `<b>${fmt(sl.hours, 1)} h</b> sleep last night ${sl.quality ? SLEEP_QUALITY[sl.quality] : ""}${sl.hours >= stg ? " ✓" : ""}` : `How did you sleep last night?`}</div><span class="pts">${sl ? "edit" : `log · +${POINTS.sleep}`}</span></div>`; })()}
+      ${(() => { const sl = sleepOn(r, d), stg = sleepTarget(r), stp = daySteps(r, d), sg = stepGoal(), km = dayKm(r, d);
+        return `<div class="tiles">
+          <div class="tile water ${g >= wt ? "done" : ""}"><div class="tile-top" data-go="water">${glassSvg(true)}<b>${g}<small>/${wt}</small></b></div><small data-go="water">glasses</small>
+            <button class="tile-plus" data-water="1" aria-label="One more glass">+ 1</button></div>
+          <div class="tile sleep ${sl && sl.hours >= stg ? "done" : ""}" data-go="sleep" role="button" tabindex="0"><div class="tile-top">🌙<b>${sl ? fmt(sl.hours, 1) : "–"}<small> h</small></b></div><small>${sl ? "sleep" + (sl.quality ? " " + SLEEP_QUALITY[sl.quality] : "") : "log sleep"}</small>
+            <div class="bar"><i style="width:${sl ? Math.min(100, (sl.hours / stg) * 100) : 0}%"></i></div></div>
+          <div class="tile steps ${stp >= sg ? "done" : ""}" data-go="move" role="button" tabindex="0"><div class="tile-top">👟<b>${stp >= 10000 ? fmt(stp / 1000, 1) + "k" : fmt(stp)}</b></div><small>steps · ${fmt(km, 1)} km</small>
+            <div class="bar"><i style="width:${Math.min(100, (stp / sg) * 100)}%"></i></div></div>
+        </div>`; })()}
       <div class="checks">${items.map(([done, label, p, attr]) => `<div class="check click ${done ? "done" : ""}" ${attr} role="button" tabindex="0"><span class="tick">${done ? "✓" : ""}</span><span class="grow">${esc(label)}</span><span class="pts">${p}</span></div>`).join("")}</div>
-      <p class="note">${core3} of 3 done today${g >= wt ? " · water goal reached 🥛" : ` · reach ${wt} glasses for +${POINTS.water}`}.</p>
+      <p class="note">${core3} of 3 done today.</p>
     </section>`;
   }
   function challengeDone(r, c, d = todayStr()) {
@@ -487,10 +497,46 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
       ${soon.map((c) => `<div class="item" style="opacity:.7"><div class="grow"><div class="t">${esc(c.title)}</div><div class="s">Starts ${shortDate(c.start)} · ${esc(c.type)} · ${c.points} pts</div></div><span class="pill">Upcoming</span></div>`).join("")}</div></section>`;
   }
 
+  const saHour = () => Number(new Date().toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg", hour: "numeric", hour12: false })) % 24;
+  /** Personal coaching: honest, habit based nudges. Never about pushing the scale. */
+  function coachTips() {
+    const r = rec(state.me), t = todayStr(), h = saHour(), tips = [], sc = score(state.me);
+    const g = glasses(r, t), wt = waterTarget(), expected = Math.min(wt, Math.ceil(wt * Math.max(0, (h - 6) / 14)));
+    if (g < expected) tips.push([3, `🥛 You're at ${g} of ${wt} glasses. Drink ${expected - g} more glass${expected - g === 1 ? "" : "es"} now to stay on track.`, "water"]);
+    const sl = sleepOn(r, t), stg = sleepTarget(r);
+    if (!sl && h >= 6) tips.push([2, "🌙 Log last night's sleep. It takes five seconds.", "sleep"]);
+    else if (sl && sl.hours < stg) tips.push([4, `🌙 You slept ${fmt(sl.hours, 1)} hours, below your ${stg} hour goal. Aim for lights out by 22:00 tonight; good sleep steadies appetite tomorrow.`, "sleep"]);
+    const stp = daySteps(r, t), sg = stepGoal();
+    if (stp < sg && h >= 14) tips.push([3, `👟 ${fmt(sg - stp)} steps to your goal. A 20 minute walk adds about 2 500 steps.`, "move"]);
+    const e = energy(r), tot = dayTotals(r, t);
+    if (e && tot.eaten > e.target + tot.burned + (treatOn(r, t) ? TREAT.kcal : 0)) tips.push([4, `🍽️ You're ${fmt(tot.eaten - e.target - tot.burned)} kcal over today. Keep the next meal light: vegetables and lean protein, and water instead of fizzy drinks.`, "food"]);
+    else if (!tot.eaten && h >= 13) tips.push([2, "🍽️ Log what you've eaten today. Honest logs lead to better choices.", "food"]);
+    if (!r.reflections.some((x) => x.date === t) && h >= 19) tips.push([1, "📓 Write one line in your journal before bed: one choice you are proud of today.", "journal"]);
+    const y = addDays(t, -1);
+    if (y >= settings().start && y >= (r.profile.joinedDate || "") && !dayStatus(r, y).any && !holiday(y)) tips.push([5, "↩️ Yesterday was missed. Today is a fresh start: log one thing now to get back on track.", "today"]);
+    // Weekly effort gap (effort points only; nobody's weight is involved)
+    const cw = currentWeek().n, mine = sc.weekPts[cw] || 0, top = Math.max(0, ...MEMBERS.map((m) => score(m.id).weekPts[cw] || 0));
+    if (todayStr() >= settings().start && top > 0) {
+      if (mine >= top) tips.push([0, "🔥 You're leading this week's effort. Keep your habits going.", "board"]);
+      else { const gap = Math.round(((top - mine) / top) * 100); tips.push([gap >= 20 ? 5 : 3, `📊 You're ${gap}% behind this week's top effort. Close the gap with honest habits: water, sleep, steps and your journal.`, "board"]); }
+    }
+    if (sc.tooFast) tips.push([6, "⚠️ You're losing weight faster than the safe pace. Eat enough, rest well and speak to a doctor if unsure. Faster loss earns no extra points.", "me"]);
+    return tips.sort((a, b) => b[0] - a[0]).slice(0, 3);
+  }
+  function coachCard() {
+    const tips = coachTips();
+    if (!tips.length) return `<section class="card coach"><div class="label">🧭 Your coach</div><p>Everything is on track today. Well done! 🌟</p></section>`;
+    return `<section class="card coach"><div class="label">🧭 Your coach</div>
+      ${tips.map(([, text, go]) => `<div class="tipline" data-go="${go}" role="button" tabindex="0">${esc(text)}<span>›</span></div>`).join("")}
+      <p class="note" style="margin:6px 0 0">Only official Saturday weigh ins count towards the winners, so always log honestly.</p></section>`;
+  }
+
   function viewToday() {
-    return `${homeScreen()}
+    return `${bigCheckin()}
+      ${homeScreen()}
       ${announcementsCard()}
       ${activitiesCard()}
+      ${coachCard()}
       ${stoicCard()}`;
   }
 
@@ -530,12 +576,12 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
     if (!items.length) return `<div class="empty">Nothing logged for ${shortDate(state.date)} yet.</div>`;
     const order = ["Breakfast", "Lunch", "Dinner", "Snack"];
     items.sort((a, b) => order.indexOf(a.meal) - order.indexOf(b.meal));
-    return `<div class="list">${items.map((f) => `<div class="item"><div class="grow"><div class="t">${esc(f.name)}</div><div class="s">${esc(f.meal)}</div></div><div class="k">${fmt(f.kcal)} kcal</div><button class="del" data-del="foods" data-id="${esc(f.id)}" aria-label="Delete">✕</button></div>`).join("")}</div>`;
+    return `<div class="list">${items.map((f) => `<div class="item"><div class="grow"><div class="t">${esc(f.name)}</div><div class="s">${esc(f.meal)}${f.custom ? " · your estimate" : ""}</div></div><div class="k">${fmt(f.kcal)} kcal</div><button class="del" data-del="foods" data-id="${esc(f.id)}" aria-label="Delete">✕</button></div>`).join("")}</div>`;
   }
   function exList(r) {
     const items = r.exercises.filter((x) => x.date === state.date);
     if (!items.length) return `<div class="empty">No exercise logged for ${shortDate(state.date)} yet.</div>`;
-    return `<div class="list">${items.map((x) => `<div class="item"><div class="grow"><div class="t">${esc(x.activity)}</div><div class="s">${fmt(x.minutes)} min</div></div><div class="k" style="color:var(--leaf)">${fmt(x.kcal)} kcal</div><button class="del" data-del="exercises" data-id="${esc(x.id)}" aria-label="Delete">✕</button></div>`).join("")}</div>`;
+    return `<div class="list">${items.map((x) => `<div class="item"><div class="grow"><div class="t">${esc(x.activity)}</div><div class="s">${fmt(x.minutes)} min${x.distanceKm ? ` · ${fmt(x.distanceKm, 1)} km` : ""}${x.steps ? ` · ${fmt(x.steps)} steps` : ""}</div></div><div class="k" style="color:var(--leaf)">${fmt(x.kcal)} kcal</div><button class="del" data-del="exercises" data-id="${esc(x.id)}" aria-label="Delete">✕</button></div>`).join("")}</div>`;
   }
 
   const glassSvg = (full = true, cls = "") => `<svg class="glass-ic ${cls}" viewBox="0 0 24 32" aria-hidden="true">
@@ -582,19 +628,24 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
     const r = rec(state.me), d = state.date, cur = r.reflections.find((x) => x.date === d);
     const pr = JOURNAL_PROMPTS[((diffDays("2026-01-01", d) % JOURNAL_PROMPTS.length) + JOURNAL_PROMPTS.length) % JOURNAL_PROMPTS.length];
     const mood = state.jMood !== undefined ? state.jMood : cur ? cur.mood : null;
+    if (!state.jChecks) state.jChecks = new Set(cur && cur.checks ? cur.checks : []);
     const past = sortByDate(r.reflections).reverse().filter((x) => x.date !== d).slice(0, 30);
+    const pastLine = (x) => `${x.mood ? MOODS[x.mood] + " " : ""}${(x.checks || []).map((c) => (JOURNAL_CHECKS.find((j) => j[0] === c) || [, ""])[1]).join(" ")}`;
     return `${logSeg()}
       <section class="card">
         <div class="row between wrap"><h2>📓 Journal</h2>${dateNav()}</div>
-        <div class="private">🔒 Your journal is private. Not even the administrator can read it.</div>
-        <p class="note" style="margin-bottom:6px">How are you feeling?</p>
-        <div class="moods">${Object.entries(MOODS).map(([k, e]) => `<button class="mood ${mood === k ? "on" : ""}" data-mood="${k}" aria-label="${k}">${e}<small>${k}</small></button>`).join("")}</div>
-        <form class="form" id="journalForm" style="margin-top:12px">
-          <label>${esc(cur && cur.prompt ? cur.prompt : pr)}<textarea id="jText" rows="6" maxlength="2000" required placeholder="Write freely…">${esc(cur ? cur.text : "")}</textarea></label>
-          <button class="btn full">${cur ? "Update entry" : `Save entry (+${POINTS.reflect} pts)`}</button></form>
+        <div class="private">🔒 Private. Only you can see it.</div>
+        <p class="bigq">😊 How do you feel?</p>
+        <div class="moods">${Object.entries(MOODS).map(([k, e]) => `<button type="button" class="mood ${mood === k ? "on" : ""}" data-mood="${k}" aria-label="${k}">${e}<small>${k}</small></button>`).join("")}</div>
+        <p class="bigq">✅ Tap what you did today</p>
+        <div class="jchecks">${JOURNAL_CHECKS.map(([id, icon, label]) => `<button type="button" class="jcheck ${state.jChecks.has(id) ? "on" : ""}" data-jc="${id}" aria-pressed="${state.jChecks.has(id)}"><span class="ji">${icon}</span><small>${esc(label)}</small><span class="jtick">✓</span></button>`).join("")}</div>
+        <details class="fold" style="margin-top:12px" ${cur && cur.text ? "open" : ""}><summary>✍🏾 Write more (optional)</summary>
+          <label>${esc(cur && cur.prompt ? cur.prompt : pr)}<textarea id="jText" rows="4" maxlength="2000" placeholder="Write freely, or leave empty…">${esc(cur ? cur.text || "" : "")}</textarea></label></details>
+        <button class="btn full big" id="jSave" style="margin-top:12px">💾 ${cur ? "Update my journal" : `Save my journal (+${POINTS.reflect} pts)`}</button>
       </section>
-      ${past.length ? `<details class="card fold"><summary>📚 Past entries (${past.length})</summary><div class="list">${past.map((x) => `<details class="item jentry"><summary><b>${x.mood ? MOODS[x.mood] + " " : ""}${fmtDate(x.date, { weekday: "short", day: "numeric", month: "short" })}</b><span class="s"> ${esc(x.text.slice(0, 40))}${x.text.length > 40 ? "…" : ""}</span></summary><p>${esc(x.text).replace(/\n/g, "<br>")}</p></details>`).join("")}</div></details>` : ""}`;
+      ${past.length ? `<details class="card fold"><summary>📚 Past days (${past.length})</summary><div class="list">${past.map((x) => `<details class="item jentry"><summary><b>${fmtDate(x.date, { weekday: "short", day: "numeric", month: "short" })}</b><span class="s"> ${pastLine(x)}</span></summary>${x.text ? `<p>${esc(x.text).replace(/\\n/g, "<br>")}</p>` : ""}</details>`).join("")}</div></details>` : ""}`;
   }
+
   function caloriesCard(r) {
     const e = energy(r), t = dayTotals(r, state.date), treat = treatOn(r, state.date);
     if (!e) return `<p class="note">🔒 Add your age and height in Me to see your daily calorie target.</p>`;
@@ -607,42 +658,59 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
       <section class="card">
         <div class="row between wrap"><h2>Log food</h2>${dateNav()}</div>
         ${caloriesCard(r)}
-        <form class="form" id="foodForm">
+        <form class="form" id="foodForm" autocomplete="off">
           <label>Meal<select id="meal">${["Breakfast", "Lunch", "Dinner", "Snack"].map((m) => `<option ${m === guessMeal() ? "selected" : ""}>${m}</option>`).join("")}</select></label>
-          <label>What did you eat?<input id="fname" placeholder="e.g. Pap and chakalaka" required maxlength="80"></label>
-          <div class="grid2">
-            <label>Calories per serving<input id="fkcal" type="number" inputmode="numeric" min="0" max="5000" required></label>
-            <label>Servings<input id="fqty" type="number" inputmode="decimal" min="0.25" step="0.25" value="1"></label>
-          </div>
-          <button class="btn full">Add to ${shortDate(state.date)}</button>
+          <label>What did you eat?<input id="fsearch" placeholder="Type a food, e.g. pap, chicken, apple" maxlength="80"></label>
+          <div id="fresults" class="fresults"></div>
+          <div id="fpicked" class="fpicked hidden"></div>
+          <div id="fcustom" class="hidden"><div class="grid2"><label>Food name<input id="fname" maxlength="80"></label><label>Calories<input id="fkcal" type="number" inputmode="numeric" min="0" max="5000"></label></div>
+            <p class="note">Custom foods are marked as your own estimate. Check the label for the calories.</p></div>
+          <button class="btn full" id="fadd" disabled>Add to ${shortDate(state.date)}</button>
         </form>
-        <details class="fold"><summary>⚡ Quick picks <small>(approximate calories)</small></summary>
-          <div class="chips" style="margin-top:8px">${QUICK_FOODS.map(([n, k], i) => `<button class="chip" data-food="${i}">${esc(n)} · ${k}</button>`).join("")}</div></details>
+        <details class="fold"><summary>⚡ Common foods</summary>
+          <div class="chips" style="margin-top:8px">${["pap", "brownbread", "egg", "chickenbreast", "rice", "chakalaka", "morogo", "apple", "banana", "amasi", "teasugar", "coke"].map((id) => `<button type="button" class="chip" data-foodid="${id}">${esc(FOOD_BY_ID[id].name)}</button>`).join("")}</div></details>
         ${foodList(r)}
       </section>`;
   }
   function guessMeal() { const h = new Date().getHours(); return h < 11 ? "Breakfast" : h < 15 ? "Lunch" : h < 21 ? "Dinner" : "Snack"; }
 
   function viewMove() {
-    const r = rec(state.me), w = latestWeight(r);
+    const r = rec(state.me), w = latestWeight(r), st = daySteps(r, state.date), km = dayKm(r, state.date), goal = stepGoal();
+    const phone = (r.steps || []).find((x) => x.date === state.date);
     return `${logSeg()}
       <section class="card">
-        <div class="row between wrap"><h2>Log movement</h2>${dateNav()}</div>
+        <div class="row between wrap"><h2>👟 Steps and distance</h2>${dateNav()}</div>
+        <div class="movetotals"><div><b>${fmt(st)}</b><small>steps</small></div><div><b>${fmt(km, 1)}</b><small>km</small></div><div><b>${fmt(r.exercises.filter((x) => x.date === state.date).reduce((a, x) => a + x.minutes, 0))}</b><small>active min</small></div></div>
+        <div class="bar" style="margin:8px 0 4px"><i style="width:${Math.min(100, (st / goal) * 100)}%"></i></div>
+        <p class="note" style="margin-top:0">${st >= goal ? `Step goal reached! +${POINTS.steps} pts 🎉` : `${fmt(goal - st)} steps to your goal of ${fmt(goal)} (+${POINTS.steps} pts).`}</p>
+        <form class="form" id="stepsForm"><label>Steps today from your phone or watch (Health / Google Fit)<div class="row"><input id="stepsIn" type="number" inputmode="numeric" min="0" max="100000" placeholder="e.g. 6420" value="${phone ? phone.steps : ""}"><button class="btn">Save</button></div></label></form>
+      </section>
+      <section class="card">
+        <div class="row between wrap"><h2>Log an activity</h2></div>
         <form class="form" id="exForm">
           <label>Activity<select id="act">${ACTIVITIES.map(([n, m], i) => `<option value="${i}">${esc(n)}</option>`).join("")}<option value="custom">Other (enter calories)</option></select></label>
           <label id="customWrap" style="display:none">Activity name<input id="actName" maxlength="80"></label>
           <div class="grid2">
             <label>Minutes<input id="mins" type="number" inputmode="numeric" min="1" max="600" value="30" required></label>
             <label>Calories burned<input id="exkcal" type="number" inputmode="numeric" min="0" max="5000" required></label>
+            <label id="kmWrap">Distance (km)<input id="exkm" type="number" inputmode="decimal" min="0" max="300" step="0.1"></label>
+            <label id="stWrap">Steps<input id="exsteps" type="number" inputmode="numeric" min="0" max="100000"></label>
           </div>
-          <p class="note" id="exNote">${w ? `Estimated for your weight of ${fmt(w, 1)} kg.` : "Add your weight in the Me tab for a personal estimate (using 70 kg for now)."}</p>
+          <p class="note" id="exNote">Calories, distance and steps are estimated${w ? ` for your weight of ${fmt(w, 1)} kg` : ""}; change them if your phone or watch shows exact numbers.</p>
           <button class="btn full">Add to ${shortDate(state.date)}</button>
         </form>
         ${exList(r)}
       </section>`;
   }
 
-  const MODES = { week: "This Week", month: "This Month", overall: "Overall" };
+  const ALL_MODES = { week: "This Week", month: "This Month", overall: "Overall" };
+  const prizes = () => ({ ...DEFAULT_CONFIG.prizes, ...((state.config && state.config.prizes) || {}) });
+  const rand = (n) => "R" + Math.round(n).toLocaleString("en-ZA").replace(/[,\u00a0]/g, " ");
+  const prizeStrip = () => `<div class="prizes"><div class="prize big"><span>🏆</span><div><b>${rand(prizes().bl)}</b><small>Grand prize · Biggest Loser</small></div></div><div class="prize"><span>⭐</span><div><b>${rand(prizes().effort)}</b><small>Greatest effort · Most Consistent</small></div></div></div>`;
+  const isSealed = () => !(state.finale && state.finale.revealed);
+  const finaleLabel = () => { const at = state.finale && state.finale.revealAt ? new Date(state.finale.revealAt) : new Date(finaleTime(settings(), state.config)); return at.toLocaleString("en-ZA", { weekday: "long", day: "numeric", month: "long", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Africa/Johannesburg" }); };
+  // While sealed, only this week's and this month's effort can be seen; the overall standings wait for the Grand Finale.
+  const MODES = new Proxy({}, { get: (_, k) => ALL_MODES[k], ownKeys: () => (isSealed() ? ["week", "month"] : ["week", "month", "overall"]), getOwnPropertyDescriptor: (_, k) => ({ enumerable: true, configurable: true, value: ALL_MODES[k] }) });
   function modePts(id, mode = state.boardMode) {
     const s = score(id);
     if (mode === "week") return s.weekPts[currentWeek().n] || 0;
@@ -659,11 +727,18 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
   }
 
   function viewBoard() {
+    if (isSealed() && state.boardMode === "overall") state.boardMode = "week";
     const s = settings(), cd = challengeDay(), mode = state.boardMode, list = ranking(mode), overall = ranking("overall");
     const blId = R().biggestLoser, bl = blId ? score(blId) : null, leader = overall[0];
     const ag = state.aggregates || { lostKg: 0, since2024: 0 };
     const anyData = overall.some((x) => x.checkins || x.total);
-    const banner = cd.phase === "after" && !anyData
+    const banner = !isSealed() ? finaleCeremony() : `<section class="card winner sealed"><div class="crown">🔒</div>
+          <h2>The winners are sealed</h2>
+          ${prizeStrip()}
+          <p>We find out together at the <b>Grand Finale</b>:<br>${esc(finaleLabel())}</p>
+          <p class="note">Two winners: the <b>Biggest Loser</b> (highest percentage of starting weight lost at the official weigh ins) and the <b>Most Consistent Participant</b> award for the greatest effort (best healthy habits). Until then, only this week's and this month's effort are shown.</p>
+          <p class="muted">Crew total this challenge: <b>${fmt(ag.lostKg, 1)} kg</b> lost 🎉${ag.since2024 > 0 ? ` · since November 2024: <b style="color:var(--leaf)">${fmt(ag.since2024, 1)} kg</b>` : ""}</p></section>`;
+    const bannerOld = cd.phase === "after" && !anyData
       ? `<section class="card winner"><div class="crown">🏁</div><h2>Challenge complete</h2><p class="muted">No results were recorded.</p></section>`
       : cd.phase === "after"
       ? `<section class="card winner"><div class="final-label">Closing ceremony</div>
@@ -697,7 +772,7 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
               <small>${esc(AVATARS[meta(x.id).avatar]?.name || "")} · ${x.checkins} check in${x.checkins === 1 ? "" : "s"}${meta(x.id).group ? " · " + esc(meta(x.id).group) : ""}${x.lostKg !== null && x.sw ? ` · <span class="mineonly">🔒 ${fmt(x.lostKg, 1)} kg, ${x.goal !== null ? fmt(x.goal) + "% to goal" : "no goal"}</span>` : ""}</small>
               ${dotsFor(x.id)}
             </div>
-            <div class="score">${fmt(x.pts)}<small>pts</small></div>
+            <div class="score">${x.pts === null || x.pts === undefined ? "🔒" : fmt(x.pts)}<small>pts</small></div>
           </div>`).join("") || `<div class="empty">No approved participants yet.</div>`}</div>
         <div class="legend"><span><i class="dot ok"></i>Checked in + exercised</span><span><i class="dot part"></i>Checked in</span><span><i class="dot miss"></i>Missed (${POINTS.missed})</span><span><i class="dot hol"></i>Holiday rest</span></div>
       </section>
@@ -714,12 +789,28 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
           <tr><td>Missed day (nothing logged)</td><td><b style="color:var(--danger)">${POINTS.missed}</b></td></tr>
           <tr><td>Check in on a public holiday</td><td><b>+${POINTS.holiday}</b> bonus (no penalty if you rest)</td></tr>
           <tr><td>Hard working week (treat token)</td><td><b>+${TREAT.bonus}</b> and a ${TREAT.kcal} kcal treat</td></tr>
-          <tr><td>Weight lost (at a safe pace)</td><td><b>+${POINTS.perPercent}</b> per 1% of starting weight</td></tr>
+          <tr><td>Steps goal reached</td><td><b>+${POINTS.steps}</b></td></tr>
+          <tr><td>Weight lost at official weigh ins (safe pace)</td><td><b>+${POINTS.perPercent}</b> per 1% of starting weight</td></tr>
           <tr><td>Admin challenges</td><td>points shown on each challenge</td></tr>
         </table>
-        <p class="note">Points are calculated by the server; nobody can enter their own points. Percentage lost keeps the contest fair across body sizes, and loss faster than the safe pace earns no extra points. Under 18s follow a Junior plan at a gentler pace. The final winner is announced automatically after ${fmtDate(s.end)}.</p>
+        <p class="note">Points are calculated by the server; nobody can enter their own points. Weekly and monthly awards count effort only. Only weights recorded by the administrator at the official Saturday weigh ins count, and loss faster than the safe pace earns nothing extra. <b>Two winners are revealed together at the Grand Finale:</b> the Biggest Loser (highest percentage lost) and the Greatest Effort award (most healthy habit points).</p>
       </details>
       ${holidayCard()}`;
+  }
+
+  function finaleCeremony() {
+    const r = R(), step = state.revealStep || 0;
+    const stage = (n, img, title, body) => step >= n
+      ? `<div class="stage shown"><img class="award-img" src="${img}" alt="${esc(title)}"><h2>${title}</h2>${body}</div>`
+      : `<div class="stage hiddenstage"><div class="mystery">?</div><h3>${title}</h3></div>`;
+    const podium = (rows, unit) => `<div class="podium">${rows.map((x, i) => `<div class="pod p${i + 1}">${avatar(x.id, i === 0 ? "xl" : "lg")}<b>${["🥇", "🥈", "🥉"][i]} ${esc(nameOf(x.id).split(" ")[0])}</b><small>${unit(x)}</small></div>`).join("")}</div>`;
+    return `<section class="card winner finale"><div class="final-label">🏆 Grand Finale</div>
+      ${stage(1, IMG.resilience, "Resilience Challenge Award", `<p>Most exercise minutes</p>${winnerChips(r.resilience)}`)}
+      ${stage(2, IMG.consistent, "Most Consistent Participant · Greatest Effort", `<p class="prizetag">⭐ ${rand(prizes().effort)} prize</p><p>The best healthy habits: movement, steps, water, sleep, journal and check ins</p>${podium(r.effortTop || [], (x) => fmt(x.pts) + " effort pts")}`)}
+      ${stage(3, IMG.bl_trophy, "Biggest Loser Award", `<p class="prizetag big">🏆 ${rand(prizes().bl)} grand prize</p><p>Highest percentage of starting weight lost at the official weigh ins</p>${podium(r.blTop || [], (x) => fmt(x.pct, 1) + "% lost")}
+        <div class="grid2" style="margin-top:10px"><img class="award-img" src="${IMG.bl_medal_gold}" alt="Biggest Loser gold medal"><img class="award-img" src="${IMG.bl_plaque}" alt="Biggest Loser plaque"></div>`)}
+      ${step < 3 ? `<button class="btn full" data-act="revealNext">${step === 0 ? "🎬 Start the reveal" : "Reveal the next award ▶"}</button>` : `<p class="muted">The crew lost <b>${fmt((state.aggregates || {}).lostKg || 0, 1)} kg</b> together. Congratulations, everyone! 🎉</p>`}
+    </section>`;
   }
 
   // Full weigh in records: administrators only (health information).
@@ -847,6 +938,69 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
     return `<label>Weekly goal<select id="pRate">${[[0.25, "Gentle: 0.25 kg a week"], [0.5, "Steady: 0.5 kg a week (recommended)"], [0.75, "Ambitious: 0.75 kg a week"]].map(([v, l]) => `<option value="${v}" ${Number(p.rate || 0.5) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>`;
   }
 
+  // ---------- Big daily check in (easy for everyone) ----------
+  function bigCheckin() {
+    const r = rec(state.me), t = todayStr(), st = dayStatus(r, t);
+    if (!st.checkin) return `<button class="checkin-big" data-act="checkin"><span class="ci-icon">👋🏾</span><span><b>Check in today</b><small>Tap here. +${POINTS.checkin} points</small></span></button>`;
+    return `<section class="card checked-in"><div class="row"><span class="ci-done">✅</span><div><b>You checked in today!</b><br><small>Well done. Tap a picture to add more:</small></div></div>
+      <div class="quick4">
+        <button data-water="1">${glassSvg(true)}<small>+1 water</small></button>
+        <button data-go="journal"><span>😊</span><small>Journal</small></button>
+        <button data-go="move"><span>👟</span><small>Steps</small></button>
+        <button data-go="food"><span>🍽️</span><small>Food</small></button>
+      </div></section>`;
+  }
+
+  // ---------- Charts: everything over time, as pictures ----------
+  /** Single series bar chart with an optional goal line. Tap a bar to see its value. */
+  function barChart({ days, values, color, goal, label, fmtv = (v) => fmt(v), short = false }) {
+    const W = 340, H = 140, P = { l: 30, r: 8, t: 12, b: 22 };
+    const max = Math.max(goal || 0, ...values, 1) * 1.12;
+    const n = days.length, slot = (W - P.l - P.r) / n, bw = Math.max(3, slot - 2);
+    const y = (v) => P.t + (1 - v / max) * (H - P.t - P.b), base = H - P.b;
+    const every = n <= 7 ? 1 : n <= 14 ? 2 : 5;
+    const bars = days.map((d, i) => {
+      const v = values[i] || 0, x = P.l + i * slot + (slot - bw) / 2, top = y(v), h = base - top;
+      const hit = goal && v >= goal;
+      const tip = `${fmtDate(d, { weekday: "short", day: "numeric", month: "short" })}: ${fmtv(v)} ${label}`;
+      const rr = Math.min(4, bw / 2, h);
+      return `<g class="bar-g" data-tip="${esc(tip)}"><rect x="${x - (slot - bw) / 2}" y="${P.t}" width="${slot}" height="${base - P.t}" fill="transparent"/>
+        ${v > 0 ? `<path d="M${x},${base} V${top + rr} Q${x},${top} ${x + rr},${top} H${x + bw - rr} Q${x + bw},${top} ${x + bw},${top + rr} V${base} Z" fill="${color}" opacity="${hit || !goal ? 1 : 0.55}"><title>${esc(tip)}</title></path>` : ""}
+        ${i % every === 0 || i === n - 1 ? `<text x="${x + bw / 2}" y="${H - 6}" text-anchor="middle" font-size="9.5" fill="#A99F88">${short ? fmtDate(d, { weekday: "narrow" }) : new Date(d + "T12:00:00").getDate()}</text>` : ""}</g>`;
+    }).join("");
+    return `<div class="chartbox"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)} per day">
+      <line x1="${P.l}" x2="${W - P.r}" y1="${base}" y2="${base}" stroke="#3A3428"/>
+      <text x="${P.l - 4}" y="${y(max / 1.12) + 3}" text-anchor="end" font-size="9" fill="#A99F88">${fmtv(Math.round(max / 1.12))}</text>
+      ${bars}
+      ${goal ? `<line x1="${P.l}" x2="${W - P.r}" y1="${y(goal)}" y2="${y(goal)}" stroke="#4CC36B" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${W - P.r}" y="${y(goal) - 4}" text-anchor="end" font-size="9.5" fill="#4CC36B">goal ${fmtv(goal)}</text>` : ""}
+    </svg><div class="ctip">Tap a bar to see the number</div></div>`;
+  }
+  function chartsCard() {
+    const r = rec(state.me), n = state.chartDays || 7, t = todayStr();
+    const days = []; for (let i = n - 1; i >= 0; i--) days.push(addDays(t, -i));
+    const short = n === 7, avg = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0);
+    const wt = waterTarget(), stg = sleepTarget(r), sg = stepGoal(), e = energy(r);
+    const water = days.map((d) => glasses(r, d)), sleep = days.map((d) => (sleepOn(r, d) || {}).hours || 0), steps = days.map((d) => daySteps(r, d));
+    const food = days.map((d) => dayTotals(r, d).eaten), mins = days.map((d) => r.exercises.filter((x) => x.date === d).reduce((a, x) => a + x.minutes, 0));
+    const hits = (vals, goal) => vals.filter((v) => v >= goal).length;
+    const logged = (vals) => vals.filter((v) => v > 0);
+    const block = (icon, title, big, sub, chart) => `<div class="cblock"><div class="chead"><span class="cicon">${icon}</span><div><b>${title}</b><small>${sub}</small></div><div class="cbig">${big}</div></div>${chart}</div>`;
+    const moods = days.map((d) => { const j = r.reflections.find((x) => x.date === d); return j && j.mood ? MOODS[j.mood] : j ? "📓" : "·"; });
+    return `<section class="card">
+      <div class="row between wrap"><h2>📈 My charts</h2><div class="seg">${[7, 14, 30].map((k) => `<button class="${k === n ? "on" : ""}" data-cdays="${k}">${k} days</button>`).join("")}</div></div>
+      ${block(glassSvg(true), "Water", fmt(avg(water), 1), `glasses a day · goal reached ${hits(water, wt)} of ${n} days`, barChart({ days, values: water, color: "#5AA9E6", goal: wt, label: "glasses", short }))}
+      ${block("🌙", "Sleep", logged(sleep).length ? fmt(avg(logged(sleep)), 1) + " h" : "–", `a night · goal reached ${hits(sleep, stg)} of ${n} nights`, barChart({ days, values: sleep, color: "#8E7CFF", goal: stg, label: "hours", fmtv: (v) => fmt(v, 1), short }))}
+      ${block("👟", "Steps", fmt(avg(steps)), `a day · goal reached ${hits(steps, sg)} of ${n} days`, barChart({ days, values: steps, color: "#4CC36B", goal: sg, label: "steps", short }))}
+      ${block("🏃🏾", "Movement", fmt(steps.length ? mins.reduce((a, b) => a + b, 0) : 0), `active minutes in ${n} days`, barChart({ days, values: mins, color: "#F2B134", goal: 30, label: "minutes", short }))}
+      ${block("🍽️", "Food", logged(food).length ? fmt(avg(logged(food))) : "–", `kcal a day${e ? ` · your target ${fmt(e.target)}` : ""}`, barChart({ days, values: food, color: "#E4572E", goal: e ? e.target : 0, label: "kcal", short }))}
+      <div class="cblock"><div class="chead"><span class="cicon">😊</span><div><b>Mood</b><small>from your journal</small></div></div>
+        <div class="moodrow" style="grid-template-columns:repeat(${Math.min(n, 15)},1fr)">${moods.slice(-15).map((m, i) => `<div><span>${m}</span><small>${fmtDate(days.slice(-15)[i], { day: "numeric" })}</small></div>`).join("")}</div></div>
+      <div class="cblock"><div class="chead"><span class="cicon">✅</span><div><b>Check ins</b><small>${days.filter((d) => dayStatus(r, d).any).length} of ${n} days</small></div></div>
+        <div class="calrowdots">${days.map((d) => { const any = dayStatus(r, d).any; return `<span class="cdot ${any ? "on" : d < (r.profile.joinedDate || "") || d < settings().start ? "off" : holiday(d) ? "hol" : "miss"}" title="${shortDate(d)}">${any ? "✓" : ""}</span>`; }).join("")}</div></div>
+      <p class="note">Faded bars are below the goal. The green dashed line is your goal.</p>
+    </section>`;
+  }
+
   function viewMe() {
     const r = rec(state.me), p = r.profile, sc = score(state.me);
     const todayW = r.weights.find((x) => x.date === todayStr());
@@ -868,14 +1022,17 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
         ${sc.goal !== null ? `<div style="margin-top:12px"><small>${fmt(sc.goal)}% of the way to ${fmt(p.goalWeight, 1)} kg</small><div class="bar"><i style="width:${sc.goal}%"></i></div></div>` : ""}
       </section>
 
+      ${chartsCard()}
+
       ${trophyCabinet(state.me)}
 
       <section class="card">
         <h2>⚖️ Weigh in</h2>
         <form class="form" id="wForm"><div class="grid2">
-          <label>Date<input type="date" id="wDate" value="${todayStr()}" max="${todayStr()}" required></label>
+          <label>Date<input type="text" value="Today, ${fmtDate(todayStr(), { day: "numeric", month: "short" })}" readonly></label>
           <label>Weight (kg)<input type="number" id="wKg" inputmode="decimal" step="0.1" min="20" max="400" value="${todayW ? todayW.kg : ""}" required></label></div>
-          <button class="btn full">${todayW ? "Update today's weight" : isWeighDay(todayStr()) ? `Save official weigh in (+${POINTS.weighin} pts)` : "Save weigh in"}</button></form>
+          <button class="btn full">${todayW ? "Update today's weight" : "Save personal weigh in"}</button></form>
+        <p class="note">Personal weigh ins are for your own chart. Official weights are recorded by the administrator at the Saturday weigh ins, and only those count towards the winners.</p>
         <div style="margin-top:14px">${weightChart(r)}</div>
         <div class="list">${sortByDate(r.weights).reverse().slice(0, 3).map((x) => `<div class="item"><div class="grow"><div class="t">${fmt(x.kg, 1)} kg</div><div class="s">${fmtDate(x.date, { weekday: "short", day: "numeric", month: "short" })}</div></div><button class="del" data-del="weights" data-id="${esc(x.id)}" aria-label="Delete">✕</button></div>`).join("")}</div>
       </section>
@@ -1029,7 +1186,7 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
       ${ov(598, 594, 280, 20, `<div class="rowbar green"><i style="width:${pct}%"></i></div>`, "cover")}
       ${ov(888, 588, 76, 30, `<span class="ovval" style="font-size:2.4cqw">${pct}%</span>`, "cover")}
       ${rows.map(([wd, cy]) => {
-        const d = dates[wd], done = d && taskDone(r, d), isToday = d === today, can = d && d <= today && d >= settings().start;
+        const d = dates[wd], done = d && taskDone(r, d), isToday = d === today, can = isToday && d >= settings().start;
         return `${isToday ? ov(172, cy - 26, 786, 52, "", "todayrow") : ""}
           ${ov(895, cy - 24, 50, 48, d ? (done ? "✓" : "") : "–", `cover chk ${done ? "on" : ""}`)}
           ${hs(172, cy - 26, 786, 52, can ? "task" : "tasknot", `${DAILY_TASKS[wd]} ${d ? shortDate(d) : ""}`, `data-date="${d || ""}"`)}`;
@@ -1081,6 +1238,7 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
   // ---------- Pages ----------
   function viewChallenge() {
     return `${weeklyScreen()}
+      <section class="card">${prizeStrip()}<p class="note center" style="margin:8px 0 0">Revealed together at the Grand Finale · ${esc(finaleLabel())}</p></section>
       ${upcomingCard()}
       ${treatCard(score(state.me).treats)}`;
   }
@@ -1112,30 +1270,32 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
         <div class="list">${mr.filter((m) => m.done).reverse().map((m) => `<div class="item"><div class="grow"><div class="t">${esc(m.label)}</div></div><div>${winnerChips(m.winners)}</div></div>`).join("") || `<div class="empty">The first Monthly Challenge Award is presented on 1 December 2026.</div>`}</div>
       </details>
 
-      <details class="card award" id="aw-consistent">${head(IMG.consistent, "Most Consistent Participant", `${over ? "Winner" : "Leading"}: ${names(cons)}`)}
-        ${awardImg(IMG.consistent, "Stoic by Choice Most Consistent Participant Award")}
-        <p class="note">Presented at the end of the challenge to whoever checked in on the most days (exercise days break a tie).</p>
-        <p><b>${over ? "Winner" : "Leading now"}:</b> ${winnerChips(cons)}</p>
+      <details class="card award" id="aw-consistent">${head(IMG.consistent, "Most Consistent Participant · Greatest Effort", isSealed() ? `⭐ ${rand(prizes().effort)} · 🔒 sealed until the Grand Finale` : `⭐ ${rand(prizes().effort)} · Winner: ${names(cons)}`)}
+        ${awardImg(IMG.consistent, "Stoic by Choice Greatest Effort Award")}
+        <p class="prizetag center">⭐ Prize: ${rand(prizes().effort)}</p>
+        <p class="note">Presented at the Grand Finale to the person with the most healthy habit points: movement, steps, water, sleep, journal, tasks and daily check ins. Weight is not part of this award.</p>
+        ${isSealed() ? `<p class="center">🔒 Sealed until ${esc(finaleLabel())}</p>` : `<p><b>Winner:</b> ${winnerChips(cons)}</p>`}
       </details>
 
-      <details class="card award" id="aw-resilience">${head(IMG.resilience, "Resilience Challenge Award", `${over ? "Winner" : "Leading"}: ${names(res)}`)}
+      <details class="card award" id="aw-resilience">${head(IMG.resilience, "Resilience Challenge Award", isSealed() ? "🔒 Sealed until the Grand Finale" : `Winner: ${names(res)}`)}
         ${awardImg(IMG.resilience, "Stoic by Choice Resilience Challenge Award")}
         <p class="note">Presented at the end of the challenge to whoever logged the most exercise minutes: the one who kept climbing.</p>
-        <p><b>${over ? "Winner" : "Leading now"}:</b> ${winnerChips(res)}</p>
+        ${isSealed() ? `<p class="center">🔒 Sealed until the Grand Finale</p>` : `<p><b>Winner:</b> ${winnerChips(res)}</p>`}
       </details>
 
       ${state.manualAwards.length ? `<details class="card fold"><summary>🎖️ Medals from the administrator (${state.manualAwards.length})</summary><div class="list">${state.manualAwards.slice().reverse().map((x) => `<div class="item">${avatar(x.memberId, "md")}<div class="grow"><div class="t">${esc(nameOf(x.memberId))}: ${esc(MEDAL_NAMES[x.award] || x.award)}</div><div class="s">${shortDate(x.date)}${x.note ? " · " + esc(x.note) : ""}</div></div></div>`).join("")}</div></details>` : ""}
 
-      <details class="card award final" id="aw-bl">${head(over ? IMG.bl_trophy : IMG.bl_medal_black, "Biggest Loser Award · the final award", `${over ? "Champion" : "Leader's medal"}: ${bl ? names([bl]) : "nobody yet"}`)}
-        ${over && bl ? `
+      <details class="card award final" id="aw-bl">${head(!isSealed() ? IMG.bl_trophy : IMG.bl_medal_black, "Biggest Loser Award · the final award", isSealed() ? `🏆 ${rand(prizes().bl)} grand prize · 🔒 sealed` : `🏆 ${rand(prizes().bl)} · Champion: ${bl ? names([bl]) : "–"}`)}
+        ${!isSealed() && bl ? `
           ${awardImg(IMG.bl_trophy, "Stoic by Choice Biggest Loser Award trophy")}
-          <p class="center">${avatar(bl, "lg")}<br><b class="big">${esc(nameOf(bl))}</b><br><small>${fmt(score(bl).total)} points${score(bl).pct !== null ? ` · ${fmt(score(bl).pct, 1)}% of body weight lost` : ""}</small></p>
+          <p class="center">${avatar(bl, "lg")}<br><b class="big">${esc(nameOf(bl))}</b><br><small>${(() => { const x = (R().blTop || []).find((y) => y.id === bl); return x ? fmt(x.pct, 1) + "% of starting weight lost" : ""; })()}</small></p>
           <div class="grid2">${awardImg(IMG.bl_medal_gold, "Stoic by Choice Biggest Loser medal")}${awardImg(IMG.bl_plaque, "Stoic by Choice Biggest Loser plaque")}</div>
           <p class="note center">The champion receives the Biggest Loser trophy, the gold medal and the plaque, and is crowned Grand Champion.</p>`
         : `
           ${awardImg(IMG.bl_medal_black, "Stoic by Choice Biggest Loser medal")}
-          <p class="center"><b>The leader's medal is with:</b> ${bl ? winnerChips([bl]) : `<span class="muted">nobody yet</span>`}</p>
-          <p class="note">Presented last, at the closing ceremony on ${fmtDate(settings().end, { weekday: "long", day: "numeric", month: "long", year: "numeric" })}, to the highest total score. The champion receives the trophy, the gold medal and the plaque.</p>
+          <p class="center">🔒 <b>Sealed until the Grand Finale</b><br>${esc(finaleLabel())}</p>
+          <p class="prizetag big center">🏆 Grand prize: ${rand(prizes().bl)}</p>
+          <p class="note">Presented last. The winner is the person who loses the highest percentage of their starting weight, measured only at the official Saturday weigh ins recorded by the administrator (and never faster than the safe pace). The champion receives the trophy, the gold medal and the plaque.</p>
           <div class="grid3">${awardImg(IMG.bl_trophy, "Stoic by Choice Biggest Loser trophy")}${awardImg(IMG.bl_medal_gold, "Stoic by Choice Biggest Loser gold medal")}${awardImg(IMG.bl_plaque, "Stoic by Choice Biggest Loser plaque")}</div>`}
       </details>`;
   }
@@ -1163,13 +1323,14 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
     if (act === "who") return accountMenu();
     if (act === "bell") { const n = nextWeighDay(); return toast(`🔔 ${n ? `Next official weigh in: <b>${fmtDate(n, { weekday: "long", day: "numeric", month: "long" })}</b>.` : "No weigh ins left."} ${tipFor(state.tipShift++)}`, 6000); }
     if (act === "quote") { const [q, who] = cheer(); return toast(`“${esc(q)}”<br><small style="opacity:.8">${esc(who)}</small>`, 6000); }
-    if (act === "boardmode") { const order = ["week", "month", "overall"]; state.boardMode = order[(order.indexOf(state.boardMode) + 1) % 3]; return render(); }
+    if (act === "boardmode") { const order = isSealed() ? ["week", "month"] : ["week", "month", "overall"]; state.boardMode = order[(order.indexOf(state.boardMode) + 1) % 3]; return render(); }
     if (act === "badge") { const b = BADGES[el.dataset.badge], a = achievements(meOrFirst()); const won = b.test(a);
       return toast(`${won ? "🏅 <b>Earned:</b>" : b.lead && b.lead(a) ? "🔥 <b>You are leading:</b>" : "🔒 <b>Locked:</b>"} ${esc(b.label)}<br><small>${esc(b.how)}</small>`, 5000); }
     if (act === "milestone") return toast(`${el.dataset.state === "done" ? "✅" : el.dataset.state === "cur" ? "⭐ In progress:" : "🔒"} ${esc(el.dataset.label)}`);
-    if (act === "tasknot") return toast("That day is not open yet.");
+    if (act === "tasknot") return toast("You can only tick today's task. Past days are locked, and future days are not open yet.");
     if (act === "task" || act === "taskToday") {
-      const d = act === "taskToday" ? todayStr() : el.dataset.date;
+      const d = todayStr();
+      if (act === "task" && el.dataset.date !== d) return toast("You can only tick today's task.");
       if (d < settings().start || d > settings().end) return toast(`The challenge tasks run from ${fmtDate(settings().start, { day: "numeric", month: "long" })}.`);
       return toggleTask(d);
     }
@@ -1281,10 +1442,10 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
       <table><tr><th>Award</th><th>Current holder</th></tr>
         ${r.weeks.filter((w) => w.done).slice(-4).reverse().map((w) => `<tr><td>Weekly · week ${w.n}</td><td>${winnerChips(w.winners)}</td></tr>`).join("")}
         ${r.months.filter((m) => m.done).reverse().map((m) => `<tr><td>Monthly · ${esc(m.label)}</td><td>${winnerChips(m.winners)}</td></tr>`).join("")}
-        <tr><td>Most Consistent Participant</td><td>${winnerChips(r.consistent)}</td></tr>
-        <tr><td>Resilience Challenge Award</td><td>${winnerChips(r.resilience)}</td></tr>
-        <tr><td><b>Biggest Loser (presented last)</b></td><td>${r.biggestLoser ? winnerChips([r.biggestLoser]) : "–"}</td></tr></table>
-      <p class="note">Criteria: weekly and monthly go to the most points in the period; Most Consistent to the most check in days; Resilience to the most exercise minutes; Biggest Loser to the highest total score at the end.</p></section>
+        <tr><td>Resilience Challenge Award</td><td>${isSealed() ? "🔒 sealed" : winnerChips(r.resilience)}</td></tr>
+        <tr><td>Most Consistent Participant (Greatest Effort)</td><td>${isSealed() ? "🔒 sealed" : winnerChips(r.consistent)}</td></tr>
+        <tr><td><b>Biggest Loser (presented last)</b></td><td>${isSealed() ? "🔒 sealed" : r.biggestLoser ? winnerChips([r.biggestLoser]) : "–"}</td></tr></table>
+      <p class="note">Weekly and monthly awards go to the most effort points in the period. Final awards are sealed, even for you, until the Grand Finale (Settings). Biggest Loser = highest % lost at official weigh ins; Greatest Effort = most healthy habit points; Resilience = most exercise minutes.</p></section>
       <section class="card"><h2>Issue a medal</h2>
         <form class="form" id="medalForm"><div class="grid2"><label>Participant<select id="mdWho">${memberOptions()}</select></label>
           <label>Award<select id="mdAward">${Object.entries(MEDAL_NAMES).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join("")}</select></label></div>
@@ -1294,8 +1455,8 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
 
   function admProgress() {
     return `<section class="card"><h2>📈 Participation and habits</h2><div style="overflow-x:auto"><table class="records">
-      <tr><th>Name</th><th>Points</th><th>Check ins</th><th>Missed</th><th>Streak</th><th>Exercise min</th><th>Tasks this week</th><th>🥛 Water goal days</th><th>🌙 Sleep goal nights</th><th>📓 Journal days</th><th>🔒 Lost</th><th>🔒 To goal</th></tr>
-      ${ranking("overall").map((x) => `<tr><td><b>${esc(nameOf(x.id))}</b></td><td>${fmt(x.total)}</td><td>${x.checkins}</td><td>${x.missed}</td><td>${x.streak}</td><td>${fmt(x.exerciseMinutes)}</td><td>${x.tasksThisWeek}</td><td>${x.waterGoalDays || 0}</td><td>${x.sleepGoalDays || 0}</td><td>${x.journalDays || 0}</td><td>${x.sw ? fmt(x.lostKg, 1) + " kg" : "–"}</td><td>${x.goal !== null ? fmt(x.goal) + "%" : "–"}</td></tr>`).join("")}
+      <tr><th>Name</th><th>Points 🔒</th><th>Check ins</th><th>Missed</th><th>Streak</th><th>Exercise min</th><th>Tasks this week</th><th>🥛 Water goal days</th><th>🌙 Sleep goal nights</th><th>📓 Journal days</th><th>🔒 Lost</th><th>🔒 To goal</th></tr>
+      ${MEMBERS.map((m) => score(m.id)).map((x) => `<tr><td><b>${esc(nameOf(x.id))}</b></td><td>${x.total === null ? "sealed" : fmt(x.total)}</td><td>${x.checkins}</td><td>${x.missed}</td><td>${x.streak}</td><td>${fmt(x.exerciseMinutes)}</td><td>${x.tasksThisWeek}</td><td>${x.waterGoalDays || 0}</td><td>${x.sleepGoalDays || 0}</td><td>${x.journalDays || 0}</td><td>${x.sw ? fmt(x.lostKg, 1) + " kg" : "–"}</td><td>${x.goal !== null ? fmt(x.goal) + "%" : "–"}</td></tr>`).join("")}
     </table></div></section>${recordsCard()}`;
   }
 
@@ -1315,12 +1476,24 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
       <div class="form"><button class="btn ghost full" data-csv="participation">Participation and points</button>
         <button class="btn ghost full" data-csv="weekly">Weekly and monthly winners</button>
         <button class="btn ghost full" data-csv="weights">🔒 Weigh in records</button>
-        <button class="btn ghost full" data-csv="audit">Audit log</button></div></section>`;
+        <button class="btn ghost full" data-csv="audit">Audit log</button></div></section>
+      <section class="card"><h2>💾 Backup and restore</h2>
+        <p class="note">Your data is kept safely by Netlify and is not affected when you update or redeploy the app. For extra peace of mind, download a full backup now and then (for example after each Saturday weigh in) and keep it somewhere private: it contains everyone's health information.</p>
+        <div class="form"><button class="btn full" data-backup>⬇️ Download full backup</button>
+        <label class="btn ghost full center" style="cursor:pointer">⬆️ Restore from a backup file<input type="file" id="restoreFile" accept=".json,application/json" hidden></label></div></section>`;
   }
 
   function admSettings() {
     const c = state.admin.config, s = settings();
-    return `<section class="card"><h2>⚙️ Challenge settings</h2>
+    const f = state.finale || {};
+    const local = (() => { const d = new Date(f.revealAt || finaleTime(s, c)); const z = new Date(d.getTime() + 2 * 3600e3); return z.toISOString().slice(0, 16); })();
+    return `<section class="card"><h2>🏆 Grand Finale reveal</h2>
+      <p class="note">The final results (Biggest Loser and Greatest Effort) stay sealed for everyone, including you, until this moment. Status: <b>${f.revealed ? "revealed 🎉" : "sealed 🔒"}</b></p>
+      <form class="form" id="finaleForm"><label>Reveal automatically on (South African time)<input type="datetime-local" id="fAt" value="${local}"></label><button class="btn ghost full">Save reveal time</button></form>
+      <div class="row" style="margin-top:10px">${f.revealed ? `<button class="btn ghost full" data-finale="hide">🔒 Seal the results again</button>` : `<button class="btn full" data-finale="reveal">🎬 Reveal the winners now</button>`}</div>
+      <form class="form" id="prizeForm" style="margin-top:12px"><div class="grid2"><label>Grand prize, Biggest Loser (R)<input type="number" id="pzBl" min="0" value="${prizes().bl}"></label><label>Greatest effort prize (R)<input type="number" id="pzEf" min="0" value="${prizes().effort}"></label></div><button class="btn ghost full">Save prizes</button></form>
+      <p class="note">Tip: gather the crew, press "Reveal the winners now", then open the Board tab together and tap through the ceremony.</p></section>
+    <section class="card"><h2>⚙️ Challenge settings</h2>
       <form class="form" id="datesForm"><div class="grid2"><label>Start<input type="date" id="sStart" value="${s.start}" required></label><label>End<input type="date" id="sEnd" value="${s.end}" required></label></div>
         <button class="btn ghost full">Save challenge dates</button></form></section>
       <section class="card"><h2>🔐 PIN policy and access</h2>
@@ -1371,6 +1544,12 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
     $$("[data-tpl]", v).forEach((b) => b.addEventListener("click", () => { $("#annMsg").value = b.dataset.tpl; }));
     on("annForm", () => adminSend({ action: "announce", to: $("#annTo").value, title: $("#annTitle").value, message: $("#annMsg").value, until: $("#annUntil").value }, "📣 Announcement sent."));
     $$("[data-rm-ann]", v).forEach((b) => b.addEventListener("click", () => adminSend({ action: "announce", remove: b.dataset.rmAnn })));
+    on("prizeForm", () => adminSend({ action: "config", config: { ...A.config, prizes: { bl: Number($("#pzBl").value), effort: Number($("#pzEf").value) } } }, "🏆 Prizes saved."));
+    on("finaleForm", () => { const v2 = $("#fAt").value; adminSend({ action: "finale", revealAt: v2 ? v2 + ":00+02:00" : "" }, "🏆 Reveal time saved."); });
+    $$("[data-finale]", v).forEach((b) => b.addEventListener("click", () => {
+      if (b.dataset.finale === "reveal" && !confirm("Reveal the winners to everyone now? This cannot be kept secret afterwards.")) return;
+      adminSend(b.dataset.finale === "reveal" ? { action: "finale", reveal: true } : { action: "finale", hide: true }, b.dataset.finale === "reveal" ? "🎉 Revealed! Open the Board tab together." : "🔒 Sealed again.");
+    }));
     on("datesForm", () => adminSend({ action: "settings", start: $("#sStart").value, end: $("#sEnd").value }, "📅 Dates saved."));
     on("polForm", () => adminSend({ action: "config", config: { ...A.config, pin: { maxAttempts: Number($("#pMax").value), lockMinutes: Number($("#pLock").value), hardLockAfter: 50 }, autoApprove: $("#pAuto").checked, rulesText: $("#pRules").value, privacyText: $("#pPriv").value } }, "⚙️ Settings saved."));
     // Group weigh in (health data)
@@ -1384,6 +1563,21 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
         if (await adminSend({ action: "weights", date: $("#gDate").value, entries }, `⚖️ Saved ${entries.length} weights.`)) confetti();
       });
     }
+    $$("[data-backup]", v).forEach((b) => b.addEventListener("click", async () => {
+      try {
+        const data = await api("admin", { method: "POST", body: { action: "backup" } });
+        const el = document.createElement("a");
+        el.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: "application/json" }));
+        el.download = `stoic-by-choice-backup-${todayStr()}.json`; document.body.appendChild(el); el.click(); el.remove();
+        toast("💾 Backup downloaded. Keep it somewhere private.");
+      } catch (e) { toast("⚠️ " + esc(e.message)); }
+    }));
+    $("#restoreFile", v)?.addEventListener("change", async (e) => {
+      const f = e.target.files[0]; if (!f) return;
+      let backup; try { backup = JSON.parse(await f.text()); } catch { return toast("⚠️ That file could not be read."); }
+      if (!confirm(`Restore the backup from ${backup.created || "this file"}? Current data with the same names will be replaced.`)) return;
+      await adminSend({ action: "restore", backup }, "💾 Backup restored.");
+    });
     // Reports
     $$("[data-csv]", v).forEach((b) => b.addEventListener("click", () => {
       const k = b.dataset.csv, s = settings();
@@ -1399,7 +1593,7 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
   function bind() {
     const v = $("#view");
     $$("[data-hs]", v).forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); onHotspot(b); }));
-    $$("[data-log]", v).forEach((b) => b.addEventListener("click", () => { state.logMode = b.dataset.log; state.jMood = undefined; render(); }));
+    $$("[data-log]", v).forEach((b) => b.addEventListener("click", () => { state.logMode = b.dataset.log; state.jMood = undefined; state.jChecks = null; render(); }));
     const setWater = async (n) => {
       const r = rec(state.me), d = state.date, wt = waterTarget(), before = glasses(r, d);
       n = Math.max(0, Math.min(30, n));
@@ -1419,16 +1613,23 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
       state.sleepH = undefined; state.sleepQ = undefined;
       await addEntry("sleep", { id: cur ? cur.id : uid(), date: d, hours, quality }, `🌙 ${fmt(hours, 1)} hours of sleep saved.${hours >= stg ? " Well rested!" : " Aim for an earlier night tonight."}`);
     }));
-    $$("[data-mood]", v).forEach((b) => b.addEventListener("click", () => { state.jMood = b.dataset.mood; const keep = $("#jText").value; render(); $("#jText").value = keep; }));
-    $("#journalForm", v)?.addEventListener("submit", async (e) => {
-      e.preventDefault();
+    $$("[data-mood]", v).forEach((b) => b.addEventListener("click", () => { state.jMood = b.dataset.mood; $$("[data-mood]", v).forEach((x) => x.classList.toggle("on", x === b)); }));
+    $$("[data-jc]", v).forEach((b) => b.addEventListener("click", () => { const id = b.dataset.jc; state.jChecks.has(id) ? state.jChecks.delete(id) : state.jChecks.add(id); b.classList.toggle("on"); b.setAttribute("aria-pressed", state.jChecks.has(id)); }));
+    $("#jSave", v)?.addEventListener("click", async () => {
       const r = rec(state.me), d = state.date, cur = r.reflections.find((x) => x.date === d);
-      const pr = $("#journalForm label").childNodes[0].textContent.trim();
-      const mood = state.jMood !== undefined ? state.jMood : cur ? cur.mood : null;
-      state.jMood = undefined;
-      if (cur) { if (await send({ action: "add", type: "reflections", entry: { id: cur.id, date: d, text: $("#jText").value.trim(), mood, prompt: pr } })) { render(); toast("📓 Journal entry updated."); } }
-      else await addEntry("reflections", { id: uid(), date: d, text: $("#jText").value.trim(), mood, prompt: pr }, "📓 Journal entry saved.");
+      const mood = state.jMood !== undefined ? state.jMood : cur ? cur.mood : null, checks = [...(state.jChecks || [])], text = ($("#jText") || { value: "" }).value.trim();
+      if (!mood && !checks.length && !text) return toast("😊 Tap how you feel, or tap a picture.");
+      const pr = $(".fold label") ? $(".fold label").childNodes[0].textContent.trim() : "";
+      const entry = { id: cur ? cur.id : uid(), date: d, text, mood, checks, prompt: pr };
+      state.jMood = undefined; state.jChecks = null;
+      if (cur) { if (await send({ action: "add", type: "reflections", entry })) { render(); toast("📓 Journal updated ✓"); } }
+      else await addEntry("reflections", entry, `📓 Journal saved ✓ ${checks.length ? checks.length + " good things today!" : ""}`, true);
     });
+
+    $$("[data-act=revealNext]", v).forEach((b) => b.addEventListener("click", () => { state.revealStep = (state.revealStep || 0) + 1; render(); confetti(); setTimeout(confetti, 400); const el = $$(".stage.shown").pop(); if (el) el.scrollIntoView({ behavior: "smooth", block: "center" }); }));
+    $$("[data-act=checkin]", v).forEach((b) => b.addEventListener("click", async () => { b.disabled = true; await addEntry("checkins", { id: uid(), date: todayStr() }, "👋🏾 Checked in! Have a great day.", true); }));
+    $$("[data-cdays]", v).forEach((b) => b.addEventListener("click", () => { state.chartDays = Number(b.dataset.cdays); render(); }));
+    $$(".chartbox", v).forEach((box) => $$("[data-tip]", box).forEach((g) => g.addEventListener("click", () => { $(".ctip", box).textContent = g.dataset.tip; $$(".bar-g", box).forEach((x) => x.classList.toggle("sel", x === g)); })));
     $$("[data-act=reflect]", v).forEach((b) => b.addEventListener("click", reflectModal));
     $$("[data-mode]", v).forEach((b) => b.addEventListener("click", () => { state.boardMode = b.dataset.mode; render(); }));
     $$("[data-chal]", v).forEach((b) => b.addEventListener("click", async () => {
@@ -1437,6 +1638,7 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
     }));
     $$("[data-go]", v).forEach((b) => b.addEventListener("click", () => go(b.dataset.go)));
     $$("[data-nav]", v).forEach((b) => b.addEventListener("click", () => {
+      state.jChecks = null;
       const d = addDays(state.date, Number(b.dataset.nav)); if (d <= todayStr()) { state.date = d; render(); }
     }));
     $("#dateInput", v)?.addEventListener("change", (e) => { if (e.target.value && e.target.value <= todayStr()) { state.date = e.target.value; render(); } });
@@ -1455,40 +1657,76 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
     }));
 
     // Food
-    $$("[data-food]", v).forEach((b) => b.addEventListener("click", () => {
-      const [n, k] = QUICK_FOODS[b.dataset.food]; $("#fname").value = n; $("#fkcal").value = k; $("#fqty").value = 1;
-      $$(".chip", v).forEach((c) => c.classList.remove("on")); b.classList.add("on");
-    }));
-    $("#foodForm", v)?.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      const qty = Number($("#fqty").value) || 1;
-      const name = $("#fname").value.trim() + (qty !== 1 ? ` × ${qty}` : "");
-      const entry = { id: uid(), date: state.date, meal: $("#meal").value, name, kcal: Math.round(Number($("#fkcal").value) * qty) };
-      await addEntry("foods", entry, `🍽️ Logged ${esc(name)}.`);
-    });
+    const ff = $("#foodForm", v);
+    if (ff) {
+      let picked = null, qty = 1, custom = false;
+      const showPicked = () => {
+        const box = $("#fpicked");
+        if (!picked) { box.classList.add("hidden"); $("#fadd").disabled = !custom; return; }
+        box.classList.remove("hidden");
+        box.innerHTML = `<div class="row between"><div><b>${esc(picked.name)}</b><br><small>${esc(picked.serving)} · ${picked.kcal} kcal each</small></div><button type="button" class="del" data-clear aria-label="Clear">✕</button></div>
+          <div class="row between" style="margin-top:8px"><div class="seg">${SERVINGS.map((q) => `<button type="button" class="${q === qty ? "on" : ""}" data-qty="${q}">${q === 0.5 ? "½" : q === 1.5 ? "1½" : q}</button>`).join("")}</div>
+          <div class="kcalbig">${Math.round(picked.kcal * qty)} <small>kcal</small></div></div>`;
+        $$("[data-qty]", box).forEach((b) => b.addEventListener("click", () => { qty = Number(b.dataset.qty); showPicked(); }));
+        $("[data-clear]", box).addEventListener("click", () => { picked = null; $("#fsearch").value = ""; showPicked(); $("#fsearch").focus(); });
+        $("#fadd").disabled = false;
+      };
+      const pick = (f) => { picked = f; qty = 1; custom = false; $("#fcustom").classList.add("hidden"); $("#fresults").innerHTML = ""; $("#fsearch").value = f.name; showPicked(); };
+      $("#fsearch").addEventListener("input", () => {
+        const q = $("#fsearch").value; picked = null; showPicked();
+        const res = searchFoods(q);
+        $("#fresults").innerHTML = q.trim().length < 2 ? "" : res.map((f) => `<button type="button" class="fres" data-pick="${f.id}"><span>${esc(f.name)}<small>${esc(f.serving)}</small></span><b>${f.kcal}</b></button>`).join("")
+          + `<button type="button" class="fres custom" data-customfood><span>➕ Not in the list? Add “${esc(q.trim())}” as a custom food</span></button>`;
+        $$("[data-pick]", v).forEach((b) => b.addEventListener("click", () => pick(FOOD_BY_ID[b.dataset.pick])));
+        $$("[data-customfood]", v).forEach((b) => b.addEventListener("click", () => { custom = true; $("#fresults").innerHTML = ""; $("#fcustom").classList.remove("hidden"); $("#fname").value = q.trim(); $("#fkcal").focus(); $("#fadd").disabled = false; }));
+      });
+      $$("[data-foodid]", v).forEach((b) => b.addEventListener("click", () => { pick(FOOD_BY_ID[b.dataset.foodid]); ff.scrollIntoView({ behavior: "smooth" }); }));
+      ff.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const base = { id: uid(), date: state.date, meal: $("#meal").value };
+        if (picked) return addEntry("foods", { ...base, foodId: picked.id, qty, kcal: Math.round(picked.kcal * qty), name: picked.name }, `🍽️ ${esc(picked.name)}: ${Math.round(picked.kcal * qty)} kcal logged.`);
+        if (custom) { if (!$("#fname").value.trim() || $("#fkcal").value === "") return toast("Please enter the food and its calories."); return addEntry("foods", { ...base, name: $("#fname").value.trim(), kcal: Number($("#fkcal").value) }, `🍽️ ${esc($("#fname").value.trim())} logged.`); }
+        toast("Type a food and choose it from the list.");
+      });
+    }
 
     // Exercise
     const exForm = $("#exForm", v);
     if (exForm) {
       const upd = () => {
-        const a = $("#act").value; const custom = a === "custom";
+        const a = $("#act").value; const custom = a === "custom", act = custom ? null : ACTIVITIES[a], mins = Number($("#mins").value) || 0;
         $("#customWrap").style.display = custom ? "grid" : "none";
-        if (!custom) { const w = latestWeight(rec(state.me)) || 70; $("#exkcal").value = Math.round(ACTIVITIES[a][1] * w * (Number($("#mins").value) || 0) / 60); }
+        $("#kmWrap").style.display = custom || act[2] ? "grid" : "none";
+        $("#stWrap").style.display = custom || act[3] ? "grid" : "none";
+        if (!custom) {
+          const w = latestWeight(rec(state.me)) || 70, km = Math.round(act[2] * mins / 60 * 10) / 10;
+          $("#exkcal").value = Math.round(act[1] * w * mins / 60);
+          $("#exkm").value = act[2] ? km : ""; $("#exsteps").value = act[3] ? Math.round(km * act[3]) : "";
+        }
       };
       $("#act").addEventListener("change", upd); $("#mins").addEventListener("input", upd); upd();
       exForm.addEventListener("submit", async (e) => {
         e.preventDefault();
         const a = $("#act").value;
         const activity = a === "custom" ? ($("#actName").value.trim() || "Exercise") : ACTIVITIES[a][0];
-        const entry = { id: uid(), date: state.date, activity, minutes: Number($("#mins").value), kcal: Math.round(Number($("#exkcal").value)) };
+        const entry = { id: uid(), date: state.date, activity, minutes: Number($("#mins").value), kcal: Math.round(Number($("#exkcal").value)), distanceKm: Number($("#exkm").value) || 0, steps: Number($("#exsteps").value) || 0 };
         await addEntry("exercises", entry, `💪🏾 ${esc(activity)} logged.`, true);
       });
     }
 
+    $("#stepsForm", v)?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const n = Number($("#stepsIn").value); if (!(n >= 0)) return toast("Please enter your steps.");
+      const before = daySteps(rec(state.me), state.date);
+      if (await send({ action: "add", type: "steps", entry: { id: uid(), date: state.date, steps: Math.round(n) } })) {
+        render(); if (n >= stepGoal() && before < stepGoal()) { confetti(); toast(`👟 Step goal reached! +${POINTS.steps} pts`); } else toast(`👟 ${fmt(n)} steps saved.`);
+      }
+    });
+
     // Weigh in
     $("#wForm", v)?.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const r = rec(state.me), kg = Number($("#wKg").value), date = $("#wDate").value;
+      const r = rec(state.me), kg = Number($("#wKg").value), date = todayStr();
       const prev = weightOn(r, addDays(date, -1));
       const entry = { id: uid(), date, kg };
       let msg = `⚖️ ${fmt(kg, 1)} kg recorded.`;
@@ -1542,6 +1780,7 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
 
   function go(tab) {
     if (tab === "home") tab = "today";
+    state.jChecks = null;
     if (["food", "move", "water", "sleep", "journal"].includes(tab)) { state.logMode = tab; state.sleepH = undefined; state.sleepQ = undefined; tab = "log"; }
     state.tab = tab; render(); window.scrollTo({ top: 0, behavior: "smooth" });
     if (tab === "admin") adminSend({ action: "view" });
@@ -1554,7 +1793,7 @@ import { makeEngine, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BAD
   // Keep everyone in sync
   setInterval(() => { if (state.session && !state.busy && !document.hidden && state.tab !== "admin") load(); }, POLL_MS);
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) { if (state.date > todayStr()) state.date = todayStr(); if (state.session) load(); }
+    if (!document.hidden) { state.date = todayStr(); if (state.session) load(); }
   });
 
   render();

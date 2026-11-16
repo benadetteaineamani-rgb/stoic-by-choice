@@ -12,7 +12,8 @@
 //   SESSION_SECRET  long random text used to sign sign in tokens
 import crypto from "node:crypto";
 import { getStore } from "@netlify/blobs";
-import { makeEngine, DEFAULT_CONFIG, DEFAULT_SETTINGS, AVATARS, PRIVATE_FIELDS, normRecord, todaySA as realToday, addDays } from "../../public/core.js";
+import { JOURNAL_CHECKS, makeEngine, DEFAULT_CONFIG, DEFAULT_SETTINGS, AVATARS, PRIVATE_FIELDS, SEALED_FIELDS, finaleTime, normRecord, todaySA as realToday, addDays } from "../../public/core.js";
+import { FOOD_BY_ID } from "../../public/foods.js";
 
 const env = (k) => (globalThis.Netlify?.env?.get?.(k) ?? process.env[k] ?? "");
 // TEST_TODAY lets a test server pretend to be on another date. Never set it on the live site.
@@ -34,7 +35,7 @@ function seeded(m) {
   const x = SEED[m], r = normRecord({});
   if (!x) return r;
   r.profile = { name: x.name, sex: x.sex, age: null, heightCm: null, startWeight: x.start, goalWeight: x.goal, activity: 1.375, rate: 0.5, kidPlan: "controlled", beforeWeight: x.before, beforeDate: "2024-11-23" };
-  r.weights = [{ id: "start-2026-11-14", date: "2026-11-14", kg: x.start }];
+  r.weights = [{ id: "start-2026-11-14", date: "2026-11-14", kg: x.start, verified: true }];
   return r;
 }
 
@@ -71,6 +72,8 @@ function pinMatches(acct, pin) {
 const clientIp = (req) => req.headers.get("x-nf-client-connection-ip") || (req.headers.get("x-forwarded-for") || "").split(",")[0].trim() || "local";
 
 // ---------- storage ----------
+// IMPORTANT: all participant data lives in this site wide Netlify Blobs store. It survives every redeploy.
+// Never rename "kilocrew" or switch to getDeployStore, or the app will stop seeing the existing data.
 const db = () => getStore({ name: "kilocrew", consistency: "strong" });
 const getJ = async (k, d = null) => (await db().get(k, { type: "json" })) ?? d;
 const setJ = (k, v) => db().setJSON(k, v);
@@ -80,7 +83,7 @@ async function listAccounts() {
 }
 const getAccount = (id) => getJ("acct/" + id);
 const saveAccount = (a) => setJ("acct/" + a.id, a);
-const getConfig = async () => { const c = (await getJ("_config")) || {}; return { ...DEFAULT_CONFIG, ...c, points: { ...DEFAULT_CONFIG.points, ...(c.points || {}) }, treat: { ...DEFAULT_CONFIG.treat, ...(c.treat || {}) }, water: { ...DEFAULT_CONFIG.water, ...(c.water || {}) }, sleep: { ...DEFAULT_CONFIG.sleep, ...(c.sleep || {}) }, pin: { ...DEFAULT_CONFIG.pin, ...(c.pin || {}) } }; };
+const getConfig = async () => { const c = (await getJ("_config")) || {}; return { ...DEFAULT_CONFIG, ...c, points: { ...DEFAULT_CONFIG.points, ...(c.points || {}) }, treat: { ...DEFAULT_CONFIG.treat, ...(c.treat || {}) }, water: { ...DEFAULT_CONFIG.water, ...(c.water || {}) }, sleep: { ...DEFAULT_CONFIG.sleep, ...(c.sleep || {}) }, steps: { ...DEFAULT_CONFIG.steps, ...(c.steps || {}) }, finale: { ...DEFAULT_CONFIG.finale, ...(c.finale || {}) }, prizes: { ...DEFAULT_CONFIG.prizes, ...(c.prizes || {}) }, pin: { ...DEFAULT_CONFIG.pin, ...(c.pin || {}) } }; };
 const getSettings = async () => (await getJ("_settings")) || DEFAULT_SETTINGS;
 async function getRecord(memberId) { return normRecord((await getJ("member/" + memberId)) || (await getJ(memberId)) || seeded(memberId)); }
 const saveRecord = (memberId, r) => setJ("member/" + memberId, r);
@@ -128,17 +131,35 @@ async function buildState(viewer, { adminView = false } = {}) {
   const engine = makeEngine({ settings: () => settings, config: () => config, today: () => today, challengeDefs: () => challenges, adjustments: () => adjustments });
   const { summaries, results } = engine.computeAll(participants, records);
   const isAdmin = viewer.role === "admin" && adminView;
+  // The Grand Finale: final standings stay sealed for everyone (administrator included) until the reveal.
+  const revealAt = finaleTime(settings, config);
+  const revealed = !!config.finale.revealed || Date.now() >= Date.parse(revealAt);
+  const cwk = engine.currentWeek().n, cmonth = today.slice(0, 7);
   const shared = {};
   for (const [id, s] of Object.entries(summaries)) {
-    if (isAdmin || id === viewer.memberId) shared[id] = s;
-    else { const c = { ...s }; for (const f of PRIVATE_FIELDS) c[f] = null; delete c.treats; shared[id] = c; }
+    const c = { ...s };
+    if (!(isAdmin || id === viewer.memberId)) { for (const f of PRIVATE_FIELDS) c[f] = null; delete c.treats; }
+    if (!revealed) {
+      for (const f of ["isBL", "isConsistent", "isResilience"]) c[f] = false;
+      if (id !== viewer.memberId) {
+        for (const f of SEALED_FIELDS) c[f] = null;
+        c.weekPts = { [cwk]: s.weekPts[cwk] || 0 }; c.monthPts = { [cmonth]: s.monthPts[cmonth] || 0 };
+      }
+    }
+    shared[id] = c;
+  }
+  if (!revealed) Object.assign(results, { biggestLoser: null, consistent: [], resilience: [], ranking: [], blRank: [], effortRank: [] });
+  else {
+    // Podiums for the ceremony: percentage lost (official weigh ins) and effort points.
+    results.blTop = results.blRank.slice(0, 3).map((id) => ({ id, pct: Math.round(summaries[id].pctSafe * 10) / 10 }));
+    results.effortTop = results.effortRank.slice(0, 3).map((id) => ({ id, pts: summaries[id].habit }));
   }
   const t = today;
   const aggregates = { lostKg: 0, since2024: 0 };
   for (const p of participants) { const sm = summaries[p.memberId], r = records[p.memberId]; if (sm.lostKg > 0) aggregates.lostKg += sm.lostKg; const bw = r.profile.beforeWeight, cw = engine.latestWeight(r); if (bw && cw && bw > cw) aggregates.since2024 += bw - cw; }
   const out = {
     aggregates,
-    serverToday: today, settings, config: { points: config.points, treat: config.treat, water: config.water, sleep: config.sleep, rulesText: config.rulesText, privacyText: config.privacyText },
+    serverToday: today, settings, finale: { revealed, revealAt }, config: { points: config.points, treat: config.treat, water: config.water, sleep: config.sleep, steps: config.steps, prizes: config.prizes, rulesText: config.rulesText, privacyText: config.privacyText },
     me: publicAccount(viewer), participants, summaries: shared, results,
     myRecord: viewer.memberId ? records[viewer.memberId] || (await getRecord(viewer.memberId)) : null,
     challenges: challenges.filter((c) => c.end >= addDays(t, -31)),
@@ -161,14 +182,31 @@ async function markJoined(memberId) {
 }
 
 // ---------- validation of participant entries ----------
-const TYPES = ["foods", "exercises", "weights", "treats", "tasks", "reflections", "challenges", "water", "sleep"];
+const TYPES = ["foods", "exercises", "weights", "treats", "tasks", "reflections", "challenges", "water", "sleep", "steps", "checkins"];
 function cleanEntry(type, e = {}, today) {
   const base = { id: str(e.id, 40) || rid(6), date: isDate(e.date) ? e.date : null };
   if (!base.date || base.date > today || base.date < "2026-11-01") throw httpErr(400, "That date cannot be used.");
-  if (type === "foods") { const kcal = num(e.kcal, 0, 10000); if (kcal === null || !str(e.name, 80)) throw httpErr(400, "Please enter the food and its calories."); return { ...base, meal: str(e.meal, 20) || "Snack", name: str(e.name, 80), kcal }; }
-  if (type === "exercises") { const kcal = num(e.kcal, 0, 5000), minutes = num(e.minutes, 1, 600); if (kcal === null || minutes === null || !str(e.activity, 80)) throw httpErr(400, "Please enter the activity and minutes."); return { ...base, activity: str(e.activity, 80), minutes, kcal }; }
-  if (type === "weights") { const kg = num(e.kg, 20, 400); if (kg === null) throw httpErr(400, "Please enter a weight between 20 and 400 kg."); return { ...base, kg }; }
-  if (type === "reflections") { const text = str(e.text, 2000); if (!text) throw httpErr(400, "Please write something in your journal."); return { ...base, text, mood: ["great", "good", "okay", "low", "tough"].includes(e.mood) ? e.mood : null, prompt: str(e.prompt, 200) }; }
+  if (type === "foods") {
+    const meal = str(e.meal, 20) || "Snack", qty = Math.min(5, Math.max(0.25, Number(e.qty) || 1));
+    const f = FOOD_BY_ID[e.foodId];
+    // Known foods: the standard calorie count is applied here on the server, whatever the app sends.
+    if (f) return { ...base, meal, foodId: f.id, qty, name: `${f.name} (${qty === 1 ? "" : qty + " × "}${f.serving})`, kcal: Math.round(f.kcal * qty) };
+    const kcal = num(e.kcal, 0, 5000);
+    if (kcal === null || !str(e.name, 80)) throw httpErr(400, "Please choose a food from the list, or enter a custom food with its calories.");
+    return { ...base, meal, name: str(e.name, 80), kcal, custom: true };
+  }
+  if (type === "exercises") {
+    const kcal = num(e.kcal, 0, 5000), minutes = num(e.minutes, 1, 600);
+    if (kcal === null || minutes === null || !str(e.activity, 80)) throw httpErr(400, "Please enter the activity and minutes.");
+    return { ...base, activity: str(e.activity, 80), minutes, kcal, distanceKm: num(e.distanceKm, 0, 300) || 0, steps: Math.round(num(e.steps, 0, 100000) || 0) };
+  }
+  if (type === "steps") { const steps = num(e.steps, 0, 100000); if (steps === null) throw httpErr(400, "Please enter your steps."); return { ...base, steps: Math.round(steps) }; }
+  if (type === "weights") { const kg = num(e.kg, 20, 400); if (kg === null) throw httpErr(400, "Please enter a weight between 20 and 400 kg."); return { ...base, kg, verified: false }; }
+  if (type === "reflections") {
+    const ok = new Set(JOURNAL_CHECKS.map((c) => c[0])), checks = Array.isArray(e.checks) ? [...new Set(e.checks.filter((c) => ok.has(c)))] : [];
+    const text = str(e.text, 2000);
+    if (!text && !checks.length && !e.mood) throw httpErr(400, "Tap at least one picture, or choose how you feel.");
+    return { ...base, text, checks, mood: ["great", "good", "okay", "low", "tough"].includes(e.mood) ? e.mood : null, prompt: str(e.prompt, 200) }; }
   if (type === "sleep") { const hours = num(e.hours, 0, 16); if (hours === null) throw httpErr(400, "Please enter how many hours you slept."); return { ...base, hours: Math.round(hours * 2) / 2, quality: ["great", "good", "okay", "poor"].includes(e.quality) ? e.quality : null }; }
   if (type === "water") { const glasses = num(e.glasses, 0, 30); if (glasses === null) throw httpErr(400, "Please enter the number of glasses."); return { ...base, glasses: Math.round(glasses) }; }
   if (type === "challenges") return { ...base, challengeId: str(e.challengeId, 40) };
@@ -258,6 +296,8 @@ async function handleData(req, body) {
     if (!r.profile.startWeight && num(p.startWeight, 20, 400)) r.profile.startWeight = num(p.startWeight, 20, 400); // only the first time
   } else if (body.action === "add" && TYPES.includes(body.type)) {
     const e = cleanEntry(body.type, body.entry, today);
+    // Honesty rule: entries can only be made for today (South African time). No back dating, no future dates.
+    if (e.date !== today) throw httpErr(400, "You can only log things for today. Missed days cannot be filled in afterwards.");
     if (body.type === "treats") {
       const eng = makeEngine({ settings: () => settings, config: () => config, today: () => today });
       if (eng.treats(r).left < 1) throw httpErr(400, "You have no treat tokens left.");
@@ -266,12 +306,15 @@ async function handleData(req, body) {
       const def = challenges.find((c) => c.id === e.challengeId);
       if (!def || e.date < def.start || e.date > def.end) throw httpErr(400, "That challenge is not open.");
     }
-    if (["weights", "treats", "tasks", "water", "reflections", "sleep"].includes(body.type)) r[body.type] = r[body.type].filter((w) => w.date !== e.date);
+    if (body.type === "weights" && r.weights.some((w) => w.date === e.date && w.verified)) throw httpErr(400, "The administrator has already recorded your official weight for this day.");
+    if (["weights", "treats", "tasks", "water", "reflections", "sleep", "steps", "checkins"].includes(body.type)) r[body.type] = r[body.type].filter((w) => w.date !== e.date);
     if (body.type === "challenges") r.challenges = r.challenges.filter((x) => !(x.date === e.date && x.challengeId === e.challengeId));
     r[body.type].push(e);
     r[body.type] = r[body.type].slice(-5000);
   } else if (body.action === "delete" && TYPES.includes(body.type)) {
-    r[body.type] = r[body.type].filter((e) => e.id !== body.id);
+    const target = r[body.type].find((e) => e.id === body.id);
+    if (target && target.date !== today) throw httpErr(400, "Only today's entries can be removed. Past days are locked.");
+    r[body.type] = r[body.type].filter((e) => e.id !== body.id || (body.type === "weights" && e.verified));
   } else throw httpErr(400, "Unknown action.");
   await saveRecord(acct.memberId, r);
   return json(await buildState(acct));
@@ -283,8 +326,26 @@ async function handleAdmin(req, body) {
   const log = (action, detail) => audit(admin, action, detail);
   const acctFor = async (id) => { const x = await getAccount(id); if (!x) throw httpErr(404, "Participant not found."); return x; };
   const list = async (key) => (await getJ(key)) || [];
-  if (a === "view") { await log("viewed admin centre and health data"); return json(await buildState(admin, { adminView: true })); }
-  if (a === "approve") {
+  if (a === "backup") {
+    // Full copy of the challenge data (accounts with hashed PINs, records, settings, awards, audit log).
+    const { blobs } = await db().list();
+    const data = {};
+    for (const b of blobs) if (!b.key.startsWith("rl/") && !b.key.startsWith("code/")) data[b.key] = await getJ(b.key);
+    await log("downloaded a full backup");
+    return json({ app: "stoic-by-choice", version: 1, created: new Date().toISOString(), data });
+  }
+  if (a === "restore") {
+    const d = body.backup;
+    if (!d || d.app !== "stoic-by-choice" || typeof d.data !== "object") throw httpErr(400, "That file is not a Stoic by Choice backup.");
+    let n = 0;
+    for (const [k, v] of Object.entries(d.data)) {
+      if (!/^(acct\/|member\/|_)/.test(k) && !/^[a-z]+$/.test(k)) continue;
+      if (k === "_audit") continue;
+      await setJ(k, v); n++;
+    }
+    await log("restored a backup", { detail: `${n} items from ${d.created}` });
+  } else if (a === "view") { await log("viewed admin centre and health data"); return json(await buildState(admin, { adminView: true })); }
+  else if (a === "approve") {
     const x = await acctFor(body.accountId);
     const accounts = await listAccounts();
     let mid = body.memberId === "new" || !body.memberId ? x.id : String(body.memberId);
@@ -321,9 +382,21 @@ async function handleAdmin(req, body) {
       pin: { maxAttempts: num(c.pin?.maxAttempts ?? cur.pin.maxAttempts, 3, 10), lockMinutes: num(c.pin?.lockMinutes ?? cur.pin.lockMinutes, 1, 1440), hardLockAfter: num(c.pin?.hardLockAfter ?? cur.pin.hardLockAfter, 5, 50) },
       water: { target: num(c.water?.target ?? cur.water?.target ?? 8, 1, 20) },
       sleep: { target: num(c.sleep?.target ?? cur.sleep?.target ?? 7, 4, 12) },
+      steps: { goal: num(c.steps?.goal ?? cur.steps?.goal ?? 7500, 1000, 30000) },
+      finale: cur.finale,
+      prizes: { bl: num(c.prizes?.bl ?? cur.prizes?.bl ?? 10000, 0, 1000000), effort: num(c.prizes?.effort ?? cur.prizes?.effort ?? 2000, 0, 1000000) },
       autoApprove: !!(c.autoApprove ?? cur.autoApprove), rulesText: str(c.rulesText ?? cur.rulesText, 4000), privacyText: str(c.privacyText ?? cur.privacyText, 6000),
     };
     await setJ("_config", next); await log("changed settings and scoring", { detail: JSON.stringify(next.points) });
+  } else if (a === "finale") {
+    const cur = await getConfig();
+    if (body.reveal) { cur.finale = { ...cur.finale, revealed: true }; await setJ("_config", cur); await log("revealed the Grand Finale results"); }
+    else if (body.hide) { cur.finale = { ...cur.finale, revealed: false }; await setJ("_config", cur); await log("sealed the Grand Finale results again"); }
+    else {
+      const at = str(body.revealAt, 40);
+      if (at && Number.isNaN(Date.parse(at))) throw httpErr(400, "Please choose a valid date and time.");
+      cur.finale = { ...cur.finale, revealAt: at || null }; await setJ("_config", cur); await log("set the Grand Finale reveal time", { detail: at || "default" });
+    }
   } else if (a === "settings") {
     if (!isDate(body.start) || !isDate(body.end) || body.end <= body.start) throw httpErr(400, "The end date must be after the start date.");
     await setJ("_settings", { start: body.start, end: body.end, title: DEFAULT_SETTINGS.title }); await log("changed challenge dates", { detail: body.start + " to " + body.end });
@@ -366,8 +439,8 @@ async function handleAdmin(req, body) {
     for (const e of body.entries || []) {
       const kg = num(e.kg, 20, 400); if (!kg || !e.memberId) continue;
       const r = await getRecord(e.memberId);
-      if (!date) { r.profile.startWeight = kg; r.weights = r.weights.filter((w) => w.date !== "2026-11-14"); r.weights.push({ id: "start-2026-11-14", date: "2026-11-14", kg }); }
-      else { r.weights = r.weights.filter((w) => w.date !== date); r.weights.push({ id: rid(6), date, kg }); }
+      if (!date) { r.profile.startWeight = kg; r.weights = r.weights.filter((w) => w.date !== "2026-11-14"); r.weights.push({ id: "start-2026-11-14", date: "2026-11-14", kg, verified: true }); }
+      else { r.weights = r.weights.filter((w) => w.date !== date); r.weights.push({ id: rid(6), date, kg, verified: true }); }
       await saveRecord(e.memberId, r); n++;
     }
     await log("recorded group weigh in", { detail: `${n} weights for ${date || "starting weights"}` });
