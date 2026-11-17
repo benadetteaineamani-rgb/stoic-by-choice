@@ -18,6 +18,15 @@ A secure, shared challenge app for the crew: registration with email verificatio
 * About 225 foods, including the eating plan foods (raw chicken, turkey, ostrich, lean beef, veal, game, hake, kingklip, whiting, sole, tuna, calamari, prawns, crayfish, cottage cheese, ricotta, mozzarella, feta, plan vegetables and fruit), Provitas (27 kcal each), Futurelife, beef goulash (109 kcal per 100 g), Sprite Zero (about 3 kcal per 300 ml), Centrum (0 kcal), fat free yoghurt, brown bread, lettuce, cucumber, oranges and naartjies.
 * Weighed foods ask for grams or ml, with quick amounts that match the meal plans (for example 65 g, 105 g, 120 g).
 
+## Activities
+* Grouped list: walking and running; distances (walk 3, 5, 10 km; run 3, 5, 10, 15, 20, 21.1, 30, 42.2 km; cycle 10, 20, 30 km); gym (spinning, treadmill, elliptical, rowing, StairMaster, weights, circuit, HIIT, CrossFit, body pump, boxing, Zumba, aerobics, Pilates, yoga, aqua aerobics); stairs (including "Stairs: up to a floor and back down", where you enter the floor, for example 15, and how many times); sports and home activities.
+* Timed activities use MET values from the Compendium of Physical Activities. Distance activities use about 1 kcal per kg per km for running, 0.55 for walking and 0.28 for cycling. Stairs by floor use about 20 steps per floor and 0.11 kcal per step up and 0.05 kcal per step down for a 70 kg adult (Teh and Aziz, 2002), scaled to body weight.
+
+## Save the app on a phone
+* The site is an installable web app with the Stoic by Choice logo as its icon. It opens full screen like a normal app.
+* iPhone (Safari): Share ⬆️ → Add to Home Screen → Add. Android (Chrome): ⋮ menu → Install app (or tap "Save the app to my phone" on the Home tab).
+* Updates arrive automatically when you upload new files to GitHub; nothing needs reinstalling. Personal data is never stored on the phone by the app's offline helper.
+
 ## 3. Security and privacy
 * **Today only:** everything is logged for today (South African time). The date cannot be changed, missed days cannot be back dated, and past entries cannot be edited or removed. This is enforced by the server. Only the administrator can record official weigh ins for a weigh in Saturday.
 * PINs are stored only as salted scrypt hashes. Easy PINs (1234, 0000…) are refused.

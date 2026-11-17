@@ -29,13 +29,29 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
 
   // MET values, approximated from the Compendium of Physical Activities.
   // [name, MET (Compendium of Physical Activities), typical speed km/h (0 = no distance), steps per km (0 = no steps)]
+  // Activities: [name, MET, km per hour, steps per km, group]. METs from the 2011 / 2024 Compendium of Physical Activities.
+  // Distance items: [name, kcal per kg per km, minutes per km, steps per km, group, fixed km]. Running costs about 1 kcal per kg per km.
   const ACTIVITIES = [
-    ["Walking, moderate pace", 3.5, 4.8, 1300], ["Walking, brisk", 4.3, 5.6, 1250], ["Hiking", 6.0, 4.0, 1400], ["Jogging", 7.0, 8.0, 1100],
-    ["Running, 10 km/h", 9.8, 10, 1000], ["Cycling, leisurely", 4.0, 15, 0], ["Cycling, moderate", 8.0, 20, 0], ["Swimming, leisurely", 6.0, 2, 0],
-    ["Aerobics / dance class", 7.3, 0, 0], ["Social dancing", 4.5, 0, 0], ["Skipping rope", 11.8, 0, 0], ["Strength training", 3.5, 0, 0],
-    ["Strength training, vigorous", 6.0, 0, 0], ["Yoga / stretching", 2.5, 0, 0], ["Soccer / netball, casual", 7.0, 0, 0],
-    ["Stair climbing", 4.0, 0, 0], ["Gardening", 3.8, 0, 0], ["House cleaning", 3.3, 0, 0],
+    ["Walking, moderate pace", 3.5, 4.8, 1300, "Walking and running"], ["Walking, brisk", 4.3, 5.6, 1250, "Walking and running"], ["Hiking", 6.0, 4.0, 1400, "Walking and running"],
+    ["Jogging", 7.0, 8.0, 1100, "Walking and running"], ["Running, 10 km/h", 9.8, 10, 1000, "Walking and running"], ["Running, 12 km/h", 11.5, 12, 950, "Walking and running"],
+    ["Walk 3 km", 0.55, 12, 1300, "Distance", 3], ["Walk 5 km", 0.55, 12, 1300, "Distance", 5], ["Walk 10 km", 0.55, 12, 1300, "Distance", 10],
+    ["Run 3 km", 1.0, 7, 1050, "Distance", 3], ["Run 5 km (parkrun)", 1.0, 7, 1050, "Distance", 5], ["Run 10 km", 1.0, 7, 1050, "Distance", 10],
+    ["Run 15 km", 1.0, 7, 1050, "Distance", 15], ["Run 20 km", 1.0, 7, 1050, "Distance", 20], ["Run 21.1 km (half marathon)", 1.0, 7, 1050, "Distance", 21.1],
+    ["Run 30 km", 1.0, 7, 1050, "Distance", 30], ["Run 42.2 km (marathon)", 1.0, 7, 1050, "Distance", 42.2],
+    ["Cycle 10 km", 0.28, 3, 0, "Distance", 10], ["Cycle 20 km", 0.28, 3, 0, "Distance", 20], ["Cycle 30 km", 0.28, 3, 0, "Distance", 30],
+    ["Spinning class (indoor cycling)", 8.5, 0, 0, "Gym"], ["Stationary bike, moderate", 6.8, 0, 0, "Gym"], ["Treadmill walk, incline", 6.0, 0, 0, "Gym"],
+    ["Treadmill run", 9.0, 0, 0, "Gym"], ["Elliptical / cross trainer", 5.0, 0, 0, "Gym"], ["Rowing machine", 7.0, 0, 0, "Gym"],
+    ["Stair climber machine (StairMaster)", 9.0, 0, 0, "Gym"], ["Weights / strength training", 3.5, 0, 0, "Gym"], ["Weights, vigorous", 6.0, 0, 0, "Gym"],
+    ["Circuit training", 8.0, 0, 0, "Gym"], ["HIIT / bootcamp", 8.0, 0, 0, "Gym"], ["CrossFit", 8.0, 0, 0, "Gym"], ["Body pump / resistance class", 5.0, 0, 0, "Gym"],
+    ["Boxing / kickboxing class", 7.8, 0, 0, "Gym"], ["Zumba", 6.5, 0, 0, "Gym"], ["Aerobics / step class", 7.3, 0, 0, "Gym"], ["Pilates", 3.0, 0, 0, "Gym"],
+    ["Yoga / stretching", 2.5, 0, 0, "Gym"], ["Push ups, sit ups, squats (vigorous)", 8.0, 0, 0, "Gym"], ["Aqua aerobics", 5.3, 0, 0, "Gym"],
+    ["Stairs: up to a floor and back down", 0, 0, 0, "Stairs", "floors"],
+    ["Stairs, walking up and down", 4.0, 0, 0, "Stairs"], ["Stairs, fast climbing", 8.8, 0, 0, "Stairs"], ["Running up stairs", 15.0, 0, 0, "Stairs"],
+    ["Cycling, leisurely", 4.0, 15, 0, "Other"], ["Cycling, moderate", 8.0, 20, 0, "Other"], ["Swimming, leisurely", 6.0, 2, 0, "Other"], ["Swimming laps, vigorous", 9.8, 2.5, 0, "Other"],
+    ["Social dancing", 4.5, 0, 0, "Other"], ["Skipping rope", 11.8, 0, 0, "Other"], ["Soccer / netball, casual", 7.0, 0, 0, "Other"], ["Tennis", 7.3, 0, 0, "Other"],
+    ["Basketball", 6.5, 0, 0, "Other"], ["Gardening", 3.8, 0, 0, "Other"], ["House cleaning", 3.3, 0, 0, "Other"],
   ];
+  const ACT_GROUPS = ["Walking and running", "Distance", "Gym", "Stairs", "Other"];
 
   // Stoic motivation. Translations: Marcus Aurelius (George Long, 1862), Seneca (R. M. Gummere, 1917), Epictetus (George Long, 1890).
   const STOIC = [
@@ -531,8 +547,24 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
       <p class="note" style="margin:6px 0 0">Only official Saturday weigh ins count towards the winners, so always log honestly.</p></section>`;
   }
 
+  // Save to home screen (installable app)
+  const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  function installCard() {
+    if (isStandalone()) return "";
+    let hidden = false; try { hidden = localStorage.getItem("sbc_install_hide") === "1"; } catch {}
+    if (hidden) return "";
+    const how = state.installEvt
+      ? `<button class="btn full" data-install>📲 Save the app to my phone</button>`
+      : isIOS()
+        ? `<ol class="installsteps"><li>Tap the <b>Share</b> button <span class="ib">⬆️</span> at the bottom of Safari</li><li>Scroll and tap <b>Add to Home Screen</b> <span class="ib">➕</span></li><li>Tap <b>Add</b>. The Stoic by Choice book icon appears on your screen</li></ol>`
+        : `<ol class="installsteps"><li>Tap the <b>⋮ menu</b> at the top right of Chrome</li><li>Tap <b>Add to Home screen</b> or <b>Install app</b></li><li>Tap <b>Install</b>. The Stoic by Choice book icon appears on your screen</li></ol>`;
+    return `<section class="card installcard"><div class="row between"><div class="row" style="gap:10px"><img src="/icons/icon-192.png" alt="" width="44" height="44" style="border-radius:12px"><div><b>Put the app on your phone</b><br><small>Opens full screen with one tap, like any app.</small></div></div><button class="del" data-installhide aria-label="Hide">✕</button></div>${how}</section>`;
+  }
+
   function viewToday() {
-    return `${bigCheckin()}
+    return `${installCard()}
+      ${bigCheckin()}
       ${homeScreen()}
       ${announcementsCard()}
       ${activitiesCard()}
@@ -691,7 +723,11 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
       <section class="card">
         <div class="row between wrap"><h2>Log an activity</h2></div>
         <form class="form" id="exForm">
-          <label>Activity<select id="act">${ACTIVITIES.map(([n, m], i) => `<option value="${i}">${esc(n)}</option>`).join("")}<option value="custom">Other (enter calories)</option></select></label>
+          <label>Activity<select id="act">${ACT_GROUPS.map((g) => `<optgroup label="${g === "Distance" ? "Distance (5 km, 10 km, 20 km, 30 km…)" : g}">${ACTIVITIES.map((x, i) => x[4] === g ? `<option value="${i}">${esc(x[0])}</option>` : "").join("")}</optgroup>`).join("")}<option value="custom">Other (enter calories)</option></select></label>
+          <div class="grid2" id="floorsWrap" style="display:none">
+            <label>Up to floor<input id="floors" type="number" inputmode="numeric" min="1" max="100" value="15"></label>
+            <label>How many times<input id="rounds" type="number" inputmode="numeric" min="1" max="50" value="1"></label>
+          </div>
           <label id="customWrap" style="display:none">Activity name<input id="actName" maxlength="80"></label>
           <div class="grid2">
             <label>Minutes<input id="mins" type="number" inputmode="numeric" min="1" max="600" value="30" required></label>
@@ -1595,6 +1631,13 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
   // ---------- Events ----------
   function bind() {
     const v = $("#view");
+    $("[data-install]", v)?.addEventListener("click", async () => {
+      const ev = state.installEvt; if (!ev) return;
+      ev.prompt(); const choice = await ev.userChoice.catch(() => null); state.installEvt = null;
+      if (choice && choice.outcome === "accepted") toast("📲 Installed. Find the Stoic by Choice icon on your home screen.");
+      render();
+    });
+    $("[data-installhide]", v)?.addEventListener("click", () => { try { localStorage.setItem("sbc_install_hide", "1"); } catch {} render(); });
     $$("[data-hs]", v).forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); onHotspot(b); }));
     $$("[data-log]", v).forEach((b) => b.addEventListener("click", () => { state.logMode = b.dataset.log; state.jMood = undefined; state.jChecks = null; render(); }));
     const setWater = async (n) => {
@@ -1710,21 +1753,45 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
     const exForm = $("#exForm", v);
     if (exForm) {
       const upd = () => {
-        const a = $("#act").value; const custom = a === "custom", act = custom ? null : ACTIVITIES[a], mins = Number($("#mins").value) || 0;
+        const a = $("#act").value; const custom = a === "custom", act = custom ? null : ACTIVITIES[a];
         $("#customWrap").style.display = custom ? "grid" : "none";
         $("#kmWrap").style.display = custom || act[2] ? "grid" : "none";
         $("#stWrap").style.display = custom || act[3] ? "grid" : "none";
+        $("#floorsWrap").style.display = !custom && act[5] === "floors" ? "grid" : "none";
+        if (!custom && act[5] === "floors") {
+          // About 20 steps per floor. Energy per step: about 0.11 kcal up and 0.05 kcal down for a 70 kg adult (Teh and Aziz, 2002), scaled to body weight.
+          const w = latestWeight(rec(state.me)) || 70, fl = Math.max(1, Number($("#floors").value) || 1), rounds = Math.max(1, Number($("#rounds").value) || 1);
+          const stepsUp = fl * 20 * rounds;
+          $("#exkcal").value = Math.round(stepsUp * (0.11 + 0.05) * w / 70);
+          $("#exsteps").value = stepsUp * 2; $("#exkm").value = "";
+          $("#stWrap").style.display = "grid"; $("#kmWrap").style.display = "none";
+          if (state.lastAct !== a || state.floorsKey !== fl + "x" + rounds) { $("#mins").value = Math.max(1, Math.round(fl * rounds * 0.55)); state.floorsKey = fl + "x" + rounds; }
+          state.lastAct = a;
+          return;
+        }
+        if (!custom && act[5]) {
+          // Distance item: calories come from the distance; minutes are a suggestion based on an easy pace.
+          const w = latestWeight(rec(state.me)) || 70;
+          if (state.lastAct !== a) { $("#mins").value = Math.round(act[2] * act[5]); state.lastAct = a; }
+          $("#kmWrap").style.display = "grid"; $("#exkm").value = act[5]; $("#exkcal").value = Math.round(act[1] * w * act[5]);
+          $("#exsteps").value = act[3] ? Math.round(act[5] * act[3]) : "";
+          return;
+        }
+        if (state.lastAct !== a && state.lastAct != null && state.lastAct !== "custom" && ACTIVITIES[state.lastAct] && ACTIVITIES[state.lastAct][5]) { $("#mins").value = 30; }
+        state.lastAct = a;
+        const mins = Number($("#mins").value) || 0;
         if (!custom) {
           const w = latestWeight(rec(state.me)) || 70, km = Math.round(act[2] * mins / 60 * 10) / 10;
           $("#exkcal").value = Math.round(act[1] * w * mins / 60);
           $("#exkm").value = act[2] ? km : ""; $("#exsteps").value = act[3] ? Math.round(km * act[3]) : "";
         }
       };
-      $("#act").addEventListener("change", upd); $("#mins").addEventListener("input", upd); upd();
+      $("#act").addEventListener("change", upd); $("#mins").addEventListener("input", upd); $("#floors").addEventListener("input", upd); $("#rounds").addEventListener("input", upd); upd();
       exForm.addEventListener("submit", async (e) => {
         e.preventDefault();
         const a = $("#act").value;
-        const activity = a === "custom" ? ($("#actName").value.trim() || "Exercise") : ACTIVITIES[a][0];
+        let activity = a === "custom" ? ($("#actName").value.trim() || "Exercise") : ACTIVITIES[a][0];
+        if (a !== "custom" && ACTIVITIES[a][5] === "floors") { const fl = Number($("#floors").value) || 1, rn = Number($("#rounds").value) || 1; activity = `Stairs to floor ${fl} and back${rn > 1 ? ` × ${rn}` : ""}`; }
         const entry = { id: uid(), date: state.date, activity, minutes: Number($("#mins").value), kcal: Math.round(Number($("#exkcal").value)), distanceKm: Number($("#exkm").value) || 0, steps: Number($("#exsteps").value) || 0 };
         await addEntry("exercises", entry, `💪🏾 ${esc(activity)} logged.`, true);
       });
@@ -1808,6 +1875,11 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
 
   // Keep everyone in sync
   setInterval(() => { if (state.session && !state.busy && !document.hidden && state.tab !== "admin") load(); }, POLL_MS);
+  // Installable app: register the service worker and catch the install prompt (Android / desktop Chrome).
+  if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+  window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); state.installEvt = e; if (state.tab === "today") render(); });
+  window.addEventListener("appinstalled", () => { state.installEvt = null; render(); });
+
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) { state.date = todayStr(); if (state.session) load(); }
   });

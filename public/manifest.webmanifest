@@ -1,0 +1,19 @@
+{
+  "name": "Stoic by Choice · Biggest Loser Challenge",
+  "short_name": "Stoic by Choice",
+  "description": "Our family Biggest Loser challenge: food, movement, water, sleep, journal and weigh ins.",
+  "id": "/",
+  "start_url": "/?source=homescreen",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0B0906",
+  "theme_color": "#0B0906",
+  "lang": "en-ZA",
+  "categories": ["health", "fitness", "lifestyle"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
