@@ -14,6 +14,10 @@ A secure, shared challenge app for the crew: registration with email verificatio
 3. The administrator approves them in **Admin → Participants** and links them to their pre loaded record.
 4. Next time: tap your avatar and type your PIN.
 
+## Food list and eating plans
+* About 225 foods, including the eating plan foods (raw chicken, turkey, ostrich, lean beef, veal, game, hake, kingklip, whiting, sole, tuna, calamari, prawns, crayfish, cottage cheese, ricotta, mozzarella, feta, plan vegetables and fruit), Provitas (27 kcal each), Futurelife, beef goulash (109 kcal per 100 g), Sprite Zero (about 3 kcal per 300 ml), Centrum (0 kcal), fat free yoghurt, brown bread, lettuce, cucumber, oranges and naartjies.
+* Weighed foods ask for grams or ml, with quick amounts that match the meal plans (for example 65 g, 105 g, 120 g).
+
 ## 3. Security and privacy
 * **Today only:** everything is logged for today (South African time). The date cannot be changed, missed days cannot be back dated, and past entries cannot be edited or removed. This is enforced by the server. Only the administrator can record official weigh ins for a weigh in Saturday.
 * PINs are stored only as salted scrypt hashes. Easy PINs (1234, 0000…) are refused.

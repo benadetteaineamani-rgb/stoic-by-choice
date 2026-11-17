@@ -1,7 +1,7 @@
 /* Stoic by Choice · Biggest Loser Challenge (participant and admin app)
    Talks to the secure API in netlify/functions/api.mjs. Points, rankings and awards are calculated on the
    server with the same rules file (core.js) that this app uses for display. */
-import { FOODS, FOOD_BY_ID, SERVINGS, searchFoods } from "./foods.js";
+import { FOODS, FOOD_BY_ID, SERVINGS, GRAM_CHIPS, foodKcal, searchFoods } from "./foods.js";
 import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BADGES, HOLIDAYS, MOODS, SLEEP_QUALITY, JOURNAL_CHECKS, KCAL_PER_KG, todaySA, addDays, diffDays, pad, dow, holiday, emptyRecord, normRecord } from "./core.js";
 
 (() => {
@@ -667,6 +667,9 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
             <p class="note">Custom foods are marked as your own estimate. Check the label for the calories.</p></div>
           <button class="btn full" id="fadd" disabled>Add to ${shortDate(state.date)}</button>
         </form>
+        <details class="fold" open><summary>🥗 My eating plan foods</summary>
+          <div class="chips" style="margin-top:8px">${["egg", "yoghurtff", "p_chicken", "p_beef", "p_hake", "p_tuna", "p_cottage", "p_feta", "p_veg", "cucumber", "lettuce", "provita2", "futurelife", "apple", "oranges", "naartjies", "spritezero", "centrum"].map((id) => `<button type="button" class="chip" data-foodid="${id}">${esc(FOOD_BY_ID[id].name.replace(/ \(plan[^)]*\)/, ""))}</button>`).join("")}</div>
+          <p class="note">Plan proteins and vegetables are weighed raw. Type the grams, or tap a quick amount.</p></details>
         <details class="fold"><summary>⚡ Common foods</summary>
           <div class="chips" style="margin-top:8px">${["pap", "brownbread", "egg", "chickenbreast", "rice", "chakalaka", "morogo", "apple", "banana", "amasi", "teasugar", "coke"].map((id) => `<button type="button" class="chip" data-foodid="${id}">${esc(FOOD_BY_ID[id].name)}</button>`).join("")}</div></details>
         ${foodList(r)}
@@ -1659,11 +1662,23 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
     // Food
     const ff = $("#foodForm", v);
     if (ff) {
-      let picked = null, qty = 1, custom = false;
+      let picked = null, qty = 1, amount = 100, custom = false;
       const showPicked = () => {
         const box = $("#fpicked");
         if (!picked) { box.classList.add("hidden"); $("#fadd").disabled = !custom; return; }
         box.classList.remove("hidden");
+        if (picked.unit) {
+          const chips = picked.unit === "ml" ? [200, 250, 300, 330, 500] : GRAM_CHIPS;
+          box.innerHTML = `<div class="row between"><div><b>${esc(picked.name)}</b><br><small>${picked.kcal} kcal ${esc(picked.serving)}${/raw/.test(picked.serving) ? " · weigh it raw" : ""}</small></div><button type="button" class="del" data-clear aria-label="Clear">✕</button></div>
+            <div class="row between" style="margin-top:8px;gap:10px"><label style="flex:1">How much (${picked.unit})<input type="number" id="famt" inputmode="numeric" min="1" max="2000" value="${amount}"></label>
+            <div class="kcalbig" id="fkc">${foodKcal(picked, amount)} <small>kcal</small></div></div>
+            <div class="chips" style="margin-top:6px">${chips.map((g) => `<button type="button" class="chip ${g === amount ? "on" : ""}" data-amt="${g}">${g} ${picked.unit}</button>`).join("")}</div>`;
+          $("#famt", box).addEventListener("input", (e) => { amount = Math.max(0, Math.round(Number(e.target.value) || 0)); $("#fkc").innerHTML = `${foodKcal(picked, amount)} <small>kcal</small>`; });
+          $$("[data-amt]", box).forEach((b) => b.addEventListener("click", () => { amount = Number(b.dataset.amt); showPicked(); }));
+          $("[data-clear]", box).addEventListener("click", () => { picked = null; $("#fsearch").value = ""; showPicked(); $("#fsearch").focus(); });
+          $("#fadd").disabled = false;
+          return;
+        }
         box.innerHTML = `<div class="row between"><div><b>${esc(picked.name)}</b><br><small>${esc(picked.serving)} · ${picked.kcal} kcal each</small></div><button type="button" class="del" data-clear aria-label="Clear">✕</button></div>
           <div class="row between" style="margin-top:8px"><div class="seg">${SERVINGS.map((q) => `<button type="button" class="${q === qty ? "on" : ""}" data-qty="${q}">${q === 0.5 ? "½" : q === 1.5 ? "1½" : q}</button>`).join("")}</div>
           <div class="kcalbig">${Math.round(picked.kcal * qty)} <small>kcal</small></div></div>`;
@@ -1671,11 +1686,11 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
         $("[data-clear]", box).addEventListener("click", () => { picked = null; $("#fsearch").value = ""; showPicked(); $("#fsearch").focus(); });
         $("#fadd").disabled = false;
       };
-      const pick = (f) => { picked = f; qty = 1; custom = false; $("#fcustom").classList.add("hidden"); $("#fresults").innerHTML = ""; $("#fsearch").value = f.name; showPicked(); };
+      const pick = (f) => { picked = f; qty = 1; amount = f.def || 100; custom = false; $("#fcustom").classList.add("hidden"); $("#fresults").innerHTML = ""; $("#fsearch").value = f.name; showPicked(); };
       $("#fsearch").addEventListener("input", () => {
         const q = $("#fsearch").value; picked = null; showPicked();
         const res = searchFoods(q);
-        $("#fresults").innerHTML = q.trim().length < 2 ? "" : res.map((f) => `<button type="button" class="fres" data-pick="${f.id}"><span>${esc(f.name)}<small>${esc(f.serving)}</small></span><b>${f.kcal}</b></button>`).join("")
+        $("#fresults").innerHTML = q.trim().length < 2 ? "" : res.map((f) => `<button type="button" class="fres" data-pick="${f.id}"><span>${esc(f.name)}<small>${esc(f.serving)}</small></span><b>${f.unit ? f.kcal + "<small>/100" + f.unit + "</small>" : f.kcal}</b></button>`).join("")
           + `<button type="button" class="fres custom" data-customfood><span>➕ Not in the list? Add “${esc(q.trim())}” as a custom food</span></button>`;
         $$("[data-pick]", v).forEach((b) => b.addEventListener("click", () => pick(FOOD_BY_ID[b.dataset.pick])));
         $$("[data-customfood]", v).forEach((b) => b.addEventListener("click", () => { custom = true; $("#fresults").innerHTML = ""; $("#fcustom").classList.remove("hidden"); $("#fname").value = q.trim(); $("#fkcal").focus(); $("#fadd").disabled = false; }));
@@ -1684,6 +1699,7 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
       ff.addEventListener("submit", async (e) => {
         e.preventDefault();
         const base = { id: uid(), date: state.date, meal: $("#meal").value };
+        if (picked && picked.unit) { if (!amount) return toast("Please enter how much."); return addEntry("foods", { ...base, foodId: picked.id, amount, kcal: foodKcal(picked, amount), name: picked.name }, `🍽️ ${esc(picked.name.replace(/ \(plan[^)]*\)/, ""))} (${amount} ${picked.unit}): ${foodKcal(picked, amount)} kcal logged.`); }
         if (picked) return addEntry("foods", { ...base, foodId: picked.id, qty, kcal: Math.round(picked.kcal * qty), name: picked.name }, `🍽️ ${esc(picked.name)}: ${Math.round(picked.kcal * qty)} kcal logged.`);
         if (custom) { if (!$("#fname").value.trim() || $("#fkcal").value === "") return toast("Please enter the food and its calories."); return addEntry("foods", { ...base, name: $("#fname").value.trim(), kcal: Number($("#fkcal").value) }, `🍽️ ${esc($("#fname").value.trim())} logged.`); }
         toast("Type a food and choose it from the list.");

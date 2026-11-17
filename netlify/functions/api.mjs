@@ -190,6 +190,10 @@ function cleanEntry(type, e = {}, today) {
     const meal = str(e.meal, 20) || "Snack", qty = Math.min(5, Math.max(0.25, Number(e.qty) || 1));
     const f = FOOD_BY_ID[e.foodId];
     // Known foods: the standard calorie count is applied here on the server, whatever the app sends.
+    if (f && f.unit) {
+      const amount = Math.round(Math.min(2000, Math.max(1, Number(e.amount) || f.def || 100)));
+      return { ...base, meal, foodId: f.id, amount, unit: f.unit, name: `${f.name.replace(/ \(plan[^)]*\)/, "")} (${amount} ${f.unit})`, kcal: Math.round((f.kcal * amount) / 100) };
+    }
     if (f) return { ...base, meal, foodId: f.id, qty, name: `${f.name} (${qty === 1 ? "" : qty + " × "}${f.serving})`, kcal: Math.round(f.kcal * qty) };
     const kcal = num(e.kcal, 0, 5000);
     if (kcal === null || !str(e.name, 80)) throw httpErr(400, "Please choose a food from the list, or enter a custom food with its calories.");

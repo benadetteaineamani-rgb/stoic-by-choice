@@ -170,9 +170,89 @@ const RAW = [
   ["honey", "Honey", "1 teaspoon", 21, "Extras"],
   ["jam", "Jam", "1 tablespoon", 55, "Extras"],
   ["peanutbutter", "Peanut butter", "1 tablespoon", 95, "Extras"],
+  // ── Eating plan foods (weighed). kcal is per 100 g or 100 ml; the app asks for the exact weight.
+  // Raw weights, per USDA FoodData Central and SA product labels.
+  ["p_chicken", "Chicken breast, raw, no skin (plan)", "per 100 g raw", 120, "Eating plan", { u: "g", d: 120 }],
+  ["p_turkey", "Turkey breast, raw, no skin (plan)", "per 100 g raw", 114, "Eating plan", { u: "g", d: 120 }],
+  ["p_ostrich", "Ostrich, raw (plan)", "per 100 g raw", 120, "Eating plan", { u: "g", d: 110 }],
+  ["p_beef", "Beef, lean, raw, no fat or bone (plan meat)", "per 100 g raw", 125, "Eating plan", { u: "g", d: 110 }],
+  ["p_veal", "Veal, lean, raw (plan meat)", "per 100 g raw", 112, "Eating plan", { u: "g", d: 110 }],
+  ["p_game", "Venison / game, raw (plan meat)", "per 100 g raw", 120, "Eating plan", { u: "g", d: 110 }],
+  ["p_mince", "Beef mince, extra lean, raw", "per 100 g raw", 137, "Eating plan", { u: "g", d: 110 }],
+  ["goulash", "Beef goulash", "per 100 g", 109, "Protein", { u: "g", d: 100 }],
+  ["p_hake", "Hake, raw (plan fish)", "per 100 g raw", 80, "Eating plan", { u: "g", d: 105 }],
+  ["p_kingklip", "Kingklip, raw (plan fish)", "per 100 g raw", 85, "Eating plan", { u: "g", d: 105 }],
+  ["p_whiting", "Whiting, raw (plan fish)", "per 100 g raw", 90, "Eating plan", { u: "g", d: 105 }],
+  ["p_sole", "Sole, raw (plan fish)", "per 100 g raw", 70, "Eating plan", { u: "g", d: 105 }],
+  ["p_tuna", "Tuna in water, drained (plan fish)", "per 100 g", 116, "Eating plan", { u: "g", d: 105 }],
+  ["p_calamari", "Calamari, raw (plan fish)", "per 100 g raw", 92, "Eating plan", { u: "g", d: 105 }],
+  ["p_prawn", "Prawns, raw (plan fish)", "per 100 g raw", 85, "Eating plan", { u: "g", d: 105 }],
+  ["p_crayfish", "Crayfish (rock lobster), raw (plan fish)", "per 100 g raw", 112, "Eating plan", { u: "g", d: 105 }],
+  ["p_cottage", "Cottage cheese, fat free (plan cheese)", "per 100 g", 72, "Eating plan", { u: "g", d: 70 }],
+  ["p_ricotta", "Ricotta (plan cheese)", "per 100 g", 138, "Eating plan", { u: "g", d: 70 }],
+  ["p_mozzarella", "Mozzarella, low fat (plan cheese)", "per 100 g", 254, "Eating plan", { u: "g", d: 60 }],
+  ["p_feta", "Feta, cow's milk (plan, once a week)", "per 100 g", 264, "Eating plan", { u: "g", d: 55 }],
+  ["yoghurtff", "Yoghurt, plain fat free", "175 ml tub", 98, "Dairy"],
+  ["p_veg", "Mixed plan vegetables, raw", "per 100 g raw", 22, "Eating plan", { u: "g", d: 120 }],
+  ["cucumber", "Cucumber", "65 g", 10, "Vegetables"],
+  ["p_cucumber", "Cucumber, weighed", "per 100 g", 15, "Vegetables", { u: "g", d: 65 }],
+  ["lettuce", "Lettuce", "1 cup shredded (50 g)", 8, "Vegetables"],
+  ["p_lettuce", "Lettuce, weighed", "per 100 g", 15, "Vegetables", { u: "g", d: 65 }],
+  ["asparagus", "Asparagus, raw", "per 100 g", 20, "Vegetables", { u: "g", d: 75 }],
+  ["babymarrow", "Baby marrow (courgette), raw", "per 100 g", 17, "Vegetables", { u: "g", d: 75 }],
+  ["brinjal", "Brinjal (eggplant), raw", "per 100 g", 25, "Vegetables", { u: "g", d: 75 }],
+  ["p_broccoli", "Broccoli, raw, weighed", "per 100 g", 34, "Vegetables", { u: "g", d: 40 }],
+  ["p_cabbage", "Cabbage, raw, weighed", "per 100 g", 25, "Vegetables", { u: "g", d: 75 }],
+  ["cauliflower", "Cauliflower, raw", "per 100 g", 25, "Vegetables", { u: "g", d: 75 }],
+  ["gemsquash", "Gem squash", "per 100 g", 26, "Vegetables", { u: "g", d: 100 }],
+  ["gherkins", "Gherkins, dill, no sugar", "per 100 g", 12, "Vegetables", { u: "g", d: 30 }],
+  ["mushrooms", "Mushrooms, raw", "per 100 g", 22, "Vegetables", { u: "g", d: 75 }],
+  ["onion", "Onion, raw (max 30 g a day on plan)", "per 100 g", 40, "Vegetables", { u: "g", d: 30 }],
+  ["parsley", "Parsley", "per 100 g", 36, "Vegetables", { u: "g", d: 10 }],
+  ["spinach", "Spinach, raw", "per 100 g", 23, "Vegetables", { u: "g", d: 75 }],
+  ["p_tomato", "Tomato, weighed (max 70 g a day on plan)", "per 100 g", 18, "Vegetables", { u: "g", d: 70 }],
+  ["greenpepper", "Green pepper, raw", "per 100 g", 20, "Vegetables", { u: "g", d: 50 }],
+  ["apricot", "Apricot", "1", 17, "Fruit"],
+  ["grapefruit", "Grapefruit", "½ fruit", 52, "Fruit"],
+  ["greenmelon", "Green melon (spanspek / honeydew)", "180 g", 65, "Fruit"],
+  ["kiwi", "Kiwi fruit", "160 g", 98, "Fruit"],
+  ["lemon", "Lemon", "1", 17, "Fruit"],
+  ["mango100", "Mango", "100 g", 60, "Fruit"],
+  ["pawpaw100", "Pawpaw", "100 g", 43, "Fruit"],
+  ["nectarine", "Nectarine", "1 medium", 62, "Fruit"],
+  ["oranges", "Oranges", "2 medium", 120, "Fruit"],
+  ["naartjies", "Naartjies", "2", 90, "Fruit"],
+  ["provita", "Provita", "1 biscuit", 27, "Starches"],
+  ["provita2", "Provitas", "2 biscuits", 54, "Starches"],
+  ["ryvita", "Ryvita crispbread (= 2 Provitas)", "1 slice", 37, "Starches"],
+  ["ricecake", "Rice cake (= 2 Provitas)", "1", 35, "Starches"],
+  ["snackbread", "Snackbread", "1 slice", 20, "Starches"],
+  ["futurelife", "Futurelife porridge (your bowl)", "1 bowl", 386, "Starches"],
+  ["futurelife50", "Futurelife Smart food Original, dry", "50 g serving", 178, "Starches"],
+  ["oatsraw", "Oats, raw (Jungle Oats)", "per 100 g", 380, "Starches", { u: "g", d: 40 }],
+  ["brownbreadlowgi", "Brown bread, low GI", "1 slice", 80, "Starches"],
+  ["brownbread2", "Brown bread", "2 slices", 150, "Starches"],
+  ["spritezero", "Sprite Zero", "per 100 ml", 1, "Drinks", { u: "ml", d: 300 }],
+  ["sodawater", "Soda water", "330 ml", 0, "Drinks"],
+  ["tab", "Tab / diet fizzy drink", "330 ml can", 1, "Drinks"],
+  ["schweppeslite", "Schweppes Lemon Lite", "330 ml can", 5, "Drinks"],
+  ["herbaltea", "Herbal tea, no milk", "1 cup", 2, "Drinks"],
+  ["blacktea", "Tea, black, no milk", "1 cup", 2, "Drinks"],
+  ["centrum", "Centrum multivitamin", "1 tablet", 0, "Supplements"],
+  ["vitamins", "Vitamin / mineral supplement", "1 tablet", 0, "Supplements"],
+  ["sweetener", "Sweetener (Canderel / Equal)", "1 tablet or sachet", 0, "Extras"],
+  ["gum", "Sugar free gum", "1 stick", 5, "Extras"],
+  ["litemayo", "Lite mayonnaise (Nola Lite / Trim)", "1 level teaspoon", 14, "Extras"],
+  ["sprayandcook", "Spray and Cook / olive oil spray", "1 second spray", 7, "Extras"],
+  ["soysauce", "Soy sauce, light", "1 teaspoon", 3, "Extras"],
+  ["mustardpowder", "Mustard powder / curry powder / herbs", "1 teaspoon", 5, "Extras"],
+  ["vinegar", "Vinegar", "1 tablespoon", 3, "Extras"],
 ];
 
-export const FOODS = RAW.map(([id, name, serving, kcal, cat]) => ({ id, name, serving, kcal, cat }));
+// Foods with a unit (u: "g" or "ml") are weighed: kcal is per 100 g / 100 ml and d is the usual amount.
+export const FOODS = RAW.map(([id, name, serving, kcal, cat, w]) => ({ id, name, serving, kcal, cat, ...(w ? { unit: w.u, def: w.d } : {}) }));
+export const GRAM_CHIPS = [30, 50, 55, 60, 65, 70, 75, 90, 100, 105, 110, 115, 120, 125];
+export function foodKcal(f, amount) { return f.unit ? Math.round((f.kcal * amount) / 100) : Math.round(f.kcal * amount); }
 export const FOOD_BY_ID = Object.fromEntries(FOODS.map((f) => [f.id, f]));
 export const SERVINGS = [0.5, 1, 1.5, 2, 3];
 export function searchFoods(q, limit = 8) {
@@ -180,7 +260,7 @@ export function searchFoods(q, limit = 8) {
   if (!q) return [];
   const words = q.split(/\s+/);
   return FOODS.map((f) => {
-    const n = (f.name + " " + f.cat).toLowerCase();
+    const n = (f.name + " " + f.cat + (f.cat === "Eating plan" ? " plan diet" : "")).toLowerCase();
     if (!words.every((w) => n.includes(w))) return null;
     return { f, s: n.startsWith(q) ? 0 : n.includes(" " + q) ? 1 : 2 };
   }).filter(Boolean).sort((a, b) => a.s - b.s || a.f.name.length - b.f.name.length).slice(0, limit).map((x) => x.f);
