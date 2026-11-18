@@ -448,3 +448,88 @@ details.fold:not(.card) > summary { font-size: .9rem; }
 
 .brandwrap { display: flex; gap: 10px; align-items: flex-start; }
 .brandlogo { width: 44px; height: 44px; border-radius: 12px; flex: none; box-shadow: 0 0 0 1px var(--line); margin-top: 2px; }
+
+/* Today's points scorecard */
+.scorecard .scbar { height: 10px; border-radius: 99px; background: #2A2418; overflow: hidden; margin: 8px 0 10px; }
+.scorecard .scbar i { display: block; height: 100%; background: linear-gradient(90deg, var(--gold), var(--gold2)); border-radius: 99px; }
+.sclist { display: grid; gap: 8px; }
+.scrow { display: flex; align-items: center; gap: 12px; padding: 12px; border-radius: 14px; background: #17130C; border: 1px solid var(--line); cursor: pointer; min-height: 58px; }
+.scrow .scicon { font-size: 1.6rem; width: 34px; text-align: center; flex: none; display: flex; justify-content: center; }
+.scrow b { display: block; font-size: 1rem; }
+.scrow small { display: block; opacity: .75; font-size: .82rem; line-height: 1.3; }
+.scrow small em { color: var(--gold2); font-style: normal; }
+.scrow .scpts { font-weight: 800; color: var(--gold2); white-space: nowrap; font-size: 1.05rem; }
+.scrow.done { background: #14200F; border-color: #3E6B2A; }
+.scrow.done .scpts { color: #8BD66B; }
+.howpts { margin: 8px 0 0; padding-left: 18px; line-height: 1.6; font-size: .9rem; }
+/* One tap eating plan */
+.planmeal { padding: 10px 0; border-top: 1px solid var(--line); }
+.planmeal:first-of-type { border-top: 0; }
+.planopts { display: grid; gap: 8px; margin-top: 8px; }
+.planopts.two { grid-template-columns: 1fr 1fr; }
+.planbtn { display: flex; justify-content: space-between; align-items: center; gap: 8px; text-align: left; padding: 14px; border-radius: 14px; border: 1px solid var(--line); background: #1C170D; color: inherit; font: inherit; font-weight: 700; font-size: 1rem; min-height: 54px; cursor: pointer; }
+.planbtn small { font-weight: 600; opacity: .7; white-space: nowrap; }
+.planbtn:active { transform: scale(.98); }
+.planbtn:disabled { opacity: .45; }
+.planopts.two .planbtn { flex-direction: column; align-items: flex-start; }
+/* Quick move buttons */
+.quickmove { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+
+.toast { cursor: pointer; }
+.toastclose { display: block; margin-top: 6px; font-size: .75rem; opacity: .7; text-align: right; }
+
+/* Habits forming */
+.signs { display: grid; gap: 6px; }
+.sign { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 12px; background: #14200F; border: 1px solid #3E6B2A; }
+.hgrid { display: grid; gap: 5px; align-items: center; margin-top: 12px; }
+.hgrid .hday { text-align: center; opacity: .7; font-size: .75rem; }
+.hgrid .hlab { font-size: .82rem; display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.hdot { height: 26px; border-radius: 8px; background: #221D13; display: flex; align-items: center; justify-content: center; font-size: .8rem; font-weight: 800; color: #0E1A08; }
+.hdot.on { background: #6FCB4F; }
+.hdot.today { outline: 1px dashed var(--gold); }
+.teambars { display: grid; gap: 8px; margin-top: 6px; }
+.tb { display: grid; grid-template-columns: 92px 1fr 40px; align-items: center; gap: 8px; font-size: .85rem; }
+.tb span { display: flex; align-items: center; gap: 4px; }
+.tbbar { height: 10px; border-radius: 99px; background: #2A2418; overflow: hidden; }
+.tbbar i { display: block; height: 100%; background: #6FCB4F; border-radius: 99px; }
+.tb b { text-align: right; }
+/* BMI */
+.bmiscale { position: relative; height: 14px; border-radius: 99px; overflow: hidden; margin: 14px 0 4px; background: #2A2418; }
+.bmiscale i { position: absolute; top: 0; bottom: 0; }
+.bmimark { position: absolute; top: -2px; width: 4px; height: 18px; margin-left: -2px; background: #fff; opacity: .55; border-radius: 2px; }
+.bmimark.now { opacity: 1; width: 6px; margin-left: -3px; box-shadow: 0 0 0 2px #0B0906; }
+.bmilabels { display: grid; grid-template-columns: 11.7% 21.7% 16.7% 16.7% 1fr; font-size: .7rem; opacity: .7; }
+.bmisteps { display: flex; align-items: center; justify-content: space-around; margin-top: 10px; text-align: center; }
+.bmisteps div small { display: block; opacity: .7; }
+.bmisteps div b { font-size: 1.15rem; }
+
+/* Catch up loans and week list */
+.loan { border-color: #8A6A1E; }
+.loan.clear { border-color: #3E6B2A; }
+.loanrow { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--line); }
+.loanrow:first-of-type { border-top: 0; }
+.loanrow b { display: block; }
+.loanrow small { display: block; opacity: .8; line-height: 1.35; margin-top: 2px; }
+.loanrow .bar { margin-top: 6px; }
+.wslist { display: grid; gap: 6px; }
+.wsrow { display: flex; gap: 10px; align-items: flex-start; padding: 10px; border-radius: 12px; background: #201A0F; border: 1px solid #5A4416; }
+.wsrow > span { width: 26px; text-align: center; font-size: 1.2rem; flex: none; display: flex; justify-content: center; }
+.wsrow b { display: block; }
+.wsrow small { display: block; opacity: .8; }
+.wsrow.ok { background: #14200F; border-color: #3E6B2A; }
+.wsrow.ok > span { color: #8BD66B; font-weight: 800; }
+
+.scrow.penalty { background: #2A1210; border-color: #7A2E22; cursor: default; }
+.scrow.penalty .scpts { color: #FF7A63; }
+.warnline { color: #F2B134; font-weight: 700; }
+
+.flagbox { display: grid; gap: 6px; margin: 10px 0; padding: 10px 12px; border-radius: 12px; background: #2A1210; border: 1px solid #7A2E22; }
+.flagbox small { opacity: .85; }
+#fpicklist { font-size: 1rem; }
+
+.rules { margin: 10px 0 0; padding-left: 20px; line-height: 1.55; font-size: .92rem; }
+.rules li { margin-bottom: 4px; }
+.scrow .grow, .loanrow .grow, .wsrow .grow { flex: 1; min-width: 0; }
+
+.plantime { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 6px 0 4px; font-weight: 700; }
+.plantime input { max-width: 140px; }

@@ -2,10 +2,13 @@
 // Shared rules and scoring. The SAME file is used by the browser (for display) and by the
 // server (for the official points, rankings and awards), so the two can never disagree.
 
+import { FOOD_BY_ID } from "./foods.js";
+
 export const DEFAULT_SETTINGS = { start: "2026-11-17", end: "2027-04-24", title: "Stoic by Choice Biggest Loser Challenge" };
 
 export const DEFAULT_CONFIG = {
-  points: { checkin: 5, exercise: 3, weighin: 10, task: 2, reflect: 2, water: 2, sleep: 2, steps: 2, missed: -10, holiday: 3, perPercent: 100, treatBonus: 15 },
+  // Scoring version 2 (19 Nov 2026): one clear daily scorecard worth 20 points, each item counted once per day.
+  points: { checkin: 4, food: 3, exercise: 5, water: 3, sleep: 2, reflect: 1, task: 2, weighin: 10, missed: -10, eatPenalty: -5, perPercent: 100, treatBonus: 15 },
   water: { target: 8 },
   sleep: { target: 7 },
   steps: { goal: 7500 },
@@ -49,10 +52,105 @@ export const AVATARS = {
 };
 
 // Daily tasks of the weekly challenge, by weekday (0 = Sunday).
+// The daily tasks match the Weekly Challenge picture. Monday, Wednesday, Thursday and Sunday overlap with a scorecard
+// line, so on those days the task ticks itself when that habit is done and earns no extra points (nothing is counted twice).
 export const DAILY_TASKS = {
   1: "Move for 30 minutes", 2: "Eat one extra fruit or vegetable", 3: "Drink 8 glasses of water", 4: "Get at least 7 hours of sleep",
   5: "Do a 5 minute mind reset (breathe, reflect, plan)", 6: "Be active with someone (walk, dance, sport)", 0: "Reflect: What did I learn about my discipline?",
 };
+export const TASK_LINK = { 1: ["move", "Move"], 3: ["water", "Water"], 4: ["sleep", "Sleep"], 0: ["journal", "Journal"] };
+// Personal eating plans (from each person's printed plan). One tap logs the whole line: protein plus its vegetables.
+// Each option: [label, [[foodId, grams or count], ...]]
+const veg = (g) => ["p_veg", g];
+export const PLANS = {
+  judith: {
+    1: [["1 egg + 65 g veg", [["egg", 1], veg(65)]], ["50 g cheese + 65 g veg", [["p_cheese", 50], veg(65)]], ["60 g fish + 70 g veg", [["p_hake", 60], veg(70)]], ["175 ml yoghurt", [["yoghurtff", 1]]]],
+    2: [["120 g chicken + 125 g veg", [["p_chicken", 120], veg(125)]], ["110 g meat + 100 g veg", [["p_beef", 110], veg(100)]], ["110 g fish + 100 g veg", [["p_hake", 110], veg(100)]], ["75 g cheese + 125 g veg", [["p_cheese", 75], veg(125)]], ["55 g feta + 125 g veg (once a week)", [["p_feta", 55], veg(125)]]],
+    3: [["125 g chicken + 120 g veg", [["p_chicken", 125], veg(120)]], ["115 g meat + 110 g veg", [["p_beef", 115], veg(110)]], ["105 g fish + 95 g veg", [["p_hake", 105], veg(95)]]],
+    provita: 5, fruit: 2,
+  },
+  benadette: {
+    1: [["1 egg + 65 g veg", [["egg", 1], veg(65)]], ["60 g cheese + 75 g veg", [["p_cheese", 60], veg(75)]], ["50 g fish + 60 g veg", [["p_hake", 50], veg(60)]], ["175 ml yoghurt", [["yoghurtff", 1]]]],
+    2: [["115 g chicken + 120 g veg", [["p_chicken", 115], veg(120)]], ["110 g meat + 100 g veg", [["p_beef", 110], veg(100)]], ["105 g fish + 100 g veg", [["p_hake", 105], veg(100)]], ["70 g cheese + 115 g veg", [["p_cheese", 70], veg(115)]], ["55 g feta + 125 g veg (once a week)", [["p_feta", 55], veg(125)]]],
+    3: [["120 g chicken + 120 g veg", [["p_chicken", 120], veg(120)]], ["115 g meat + 110 g veg", [["p_beef", 115], veg(110)]], ["100 g fish + 90 g veg", [["p_hake", 100], veg(90)]]],
+    provita: 5, fruit: 2,
+  },
+};
+export const MOVE_MINUTES = 20;
+// Eat enough rule (from 19 Nov 2026): three meals a day, never a starvation day.
+// Under 800 kcal a day is a very low calorie diet, which should only be done under medical supervision (NICE obesity guidance);
+// under 18s should not go below about 1 200 kcal. People on a clinic eating plan follow its rule instead: three meals, never skip one.
+export const EAT_RULE_FROM = "2026-11-19";
+export const MEALS_NEEDED = 3;
+const NOT_A_MEAL = new Set(["Drinks", "Supplements", "Medicines"]);
+export const FRUIT_ALLOWANCE = 2; // fruit portions a day (eating plans: 2)
+// ---------- Eating plan rules (from the clinic's RULES and NOT ALLOWED sheets), applied to everyone as flags ----------
+const tag = (ids, why) => Object.fromEntries(ids.split(" ").map((id) => [id, why]));
+export const NOT_ALLOWED = {
+  ...tag("milkfull milklow milkskim amasi teasugar coffeesugar cappuccino hotchoc icecream smoothie", "Milk products are not allowed (no milk in tea or coffee)"),
+  ...tag("cheese", "Only cottage, ricotta, mozzarella or feta (once a week) are on the plan"),
+  ...tag("yoghurtfruit", "Only plain low fat or fat free yoghurt is allowed"),
+  ...tag("sugar honey jam sweets chocbar chocslab cookies cake doughnut koeksister muffin scone mariebiscuits rusk cordial juice coke coke500 pumpkinsweet tomsauce driedfruit mageu", "Sugar and honey are not allowed"),
+  ...tag("butter oil mayo friedchicken friedfish friedegg chips slapchips vetkoek vetkoekmince crisps crispsbig samoosa springroll chickenmeal kota bunny burger cheeseburger pizza pie sausageroll worsroll saladdressed coleslaw potatosalad morogo chickenroast peanuts peanutbutter atchar", "No oil, butter, margarine, fat or fried food (Spray and Cook only)"),
+  ...tag("gravy", "Meat stock and gravy are not allowed"),
+  ...tag("porkchop bacon", "Pork is not allowed"),
+  ...tag("lambchop", "Lamb and mutton are not allowed"),
+  ...tag("polony vienna boerewors droewors biltong pilchards", "No processed, smoked or pre cooked meat"),
+  ...tag("beer cider wine spirits", "No alcohol"),
+  ...tag("energy", "Energy drinks are not allowed"),
+  ...tag("diet", "No Diet Coke or Cola Lite (Sprite Zero, Tab, soda water and Schweppes Lemon Lite are fine)"),
+  ...tag("panadosyrup benylin", "Medicines with sugar or fruit flavour are not allowed: ask the clinic for a sugar free option"),
+  ...tag("grandpa", "Medicines with caffeine are not allowed: ask the clinic for an alternative"),
+};
+const CHEESE = new Set("p_cheese p_cottage p_ricotta p_mozzarella p_feta cheese".split(" "));
+const PROTEIN_GROUP = {
+  ...tag("p_chicken p_turkey p_ostrich chickenbreast chickenroast chickenstew livers friedchicken", "poultry"),
+  ...tag("p_beef p_veal p_game p_mince goulash mince beefstew steak mogodu", "meat"),
+  ...tag("p_hake p_kingklip p_whiting p_sole p_tuna p_calamari p_prawn p_crayfish hake tuna pilchards friedfish", "fish"),
+  ...tag("egg friedegg scrambled", "egg"),
+  ...tag("p_cheese p_cottage p_ricotta p_mozzarella p_feta cheese yoghurtff yoghurtplain", "dairy"),
+};
+const COFFEE = { coffeeblack: 1, coffeesw: 1, coffeesugar: 1, cappuccino: 1 };
+const DIET_ML = { spritezero: "ml", tab: 330, schweppeslite: 330, diet: 330 };
+/** All rule flags for a day (no points; they guide). */
+function planFlags(r, d, foods, weekFoods) {
+  const out = [], add = (k, label, how) => out.push({ k, label, how });
+  const sum = (pred, val = (f) => f.qty || 1) => foods.filter(pred).reduce((a, f) => a + val(f), 0);
+  const seen = new Set();
+  for (const f of foods) { const why = NOT_ALLOWED[f.foodId]; if (why && !seen.has(f.foodId)) { seen.add(f.foodId); add("bad", `Not on the eating plan: ${(FOOD_BY_ID[f.foodId] || {}).name || f.name}`, why); } }
+  if (foods.filter((f) => CHEESE.has(f.foodId)).length > 1) add("cheese", "Cheese more than once today", "Cheese maximum once a day");
+  const feta = weekFoods.filter((f) => f.foodId === "p_feta").length; if (feta > 1) add("feta", "Feta more than once this week", "Feta maximum once a week");
+  const slots = {}; for (const f of foods) { const g = PROTEIN_GROUP[f.foodId], m = MEAL_SLOT[f.meal] || f.meal; if (g) (slots[m] = slots[m] || new Set()).add(g); }
+  if (Object.values(slots).some((x) => x.size > 1)) add("mixed", "Proteins mixed in one meal", "Proteins are not to be mixed: one protein per meal");
+  if (foods.some((f) => ((FOOD_BY_ID[f.foodId] || {}).cat === "Fruit" && portions(f) > 2) || (PROVITA_EQ[f.foodId] || 0) * (f.qty || 1) > 2)) add("atonce", "More than 2 at a time", "Fruit and Provitas: never more than 2 at a time");
+  const g = (id) => foods.filter((f) => f.foodId === id).reduce((a, f) => a + (f.amount || 0), 0);
+  if (g("onion") > 30) add("onion", "Too much onion", `${g("onion")} g today; no more than 30 g a day`);
+  if (g("p_tomato") > 70) add("tomato", "Too much tomato", `${g("p_tomato")} g today; no more than 70 g a day, no cherry tomatoes`);
+  const mayo = sum((f) => f.foodId === "litemayo"); if (mayo > 1) add("mayo", "Too much mayonnaise", "1 level teaspoon of lite mayonnaise a day");
+  const soy = sum((f) => f.foodId === "soysauce"); if (soy > 1) add("soy", "Too much soy sauce", "1 teaspoon of light soy sauce a day; limited salt");
+  const coffee = sum((f) => COFFEE[f.foodId]); if (coffee > 8) add("coffee", "More than 8 cups of coffee", "After 8 cups, switch to decaffeinated");
+  const dietMl = foods.reduce((a, f) => a + (DIET_ML[f.foodId] === "ml" ? f.amount || 0 : (DIET_ML[f.foodId] || 0) * (f.qty || 1)), 0);
+  if (dietMl > 1000) add("fizzy", "More than 1 litre of diet fizzy drinks", "1 litre of diet fizzy drinks a day at most");
+  if (sum((f) => f.foodId === "schweppeslite") > 1) add("schweppes", "More than 1 can of Schweppes Lemon Lite", "Maximum 1 can a day");
+  // Timing (only for food with a time eaten): last meal before 9 PM, at least 5 hours between meals.
+  const isFood = (f) => f.time && !NOT_A_MEAL.has((FOOD_BY_ID[f.foodId] || {}).cat);
+  const anytime = (f) => (FOOD_BY_ID[f.foodId] || {}).cat === "Fruit" || PROVITA_EQ[f.foodId];
+  const late = foods.filter((f) => isFood(f) && !anytime(f) && f.time >= "21:00");
+  if (late.length) add("late", "Ate after 9 PM", `${[...new Set(late.map((f) => `${MEAL_SLOT[f.meal] ? f.meal : (f.name || "").replace(/ \(.*\)$/, "")} at ${f.time}`))].slice(0, 2).join(", ")}. Last meal before 9 PM`);
+  const first = {}; for (const f of foods) { const sl = MEAL_SLOT[f.meal]; if (sl && isFood(f) && !anytime(f) && (!first[sl] || f.time < first[sl].time)) first[sl] = { time: f.time, meal: f.meal }; }
+  const times = Object.values(first).sort((a, b) => a.time.localeCompare(b.time)), mins = (t) => +t.slice(0, 2) * 60 + +t.slice(3);
+  for (let i = 1; i < times.length; i++) {
+    const gap = mins(times[i].time) - mins(times[i - 1].time);
+    if (gap < 300) { add("gap", "Meals less than 5 hours apart", `${times[i - 1].meal} at ${times[i - 1].time}, ${times[i].meal} at ${times[i].time}: ${Math.floor(gap / 60)} h ${gap % 60} min. Wait at least 5 hours`); break; }
+  }
+  if (sum((f) => f.foodId === "gum") > 5) add("gum", "More than 5 sticks of gum", "5 sugar free gum sticks a day, no fruit flavours");
+  return out;
+}
+const PROVITA_EQ = { provita: 1, provita2: 2, ryvita: 2, ricecake: 2 }; // 1 Ryvita or rice cake = 2 Provitas
+/** Portions in one logged item, e.g. "2 medium" oranges = 2. */
+const portions = (f) => { const x = FOOD_BY_ID[f.foodId]; const n = x ? parseFloat(x.serving) : NaN; return (Number.isFinite(n) && n >= 1 && n <= 5 && !x.unit ? n : 1) * (f.qty || 1); };
+const MEAL_SLOT = { Breakfast: 1, "Meal 1": 1, Lunch: 2, "Meal 2": 2, Dinner: 3, "Meal 3": 3 }; // active minutes needed for the Move points (or reach the step goal)
+export const POINTS_VERSION = 2;
 
 export const KCAL_PER_KG = 7700;
 
@@ -87,14 +185,15 @@ const sortByDate = (arr) => [...arr].sort((a, b) => (a.date < b.date ? -1 : a.da
  */
 export function makeEngine(ctx) {
   const S = () => ctx.settings() || DEFAULT_SETTINGS;
-  const P = () => ({ ...DEFAULT_CONFIG.points, ...((ctx.config() || {}).points || {}) });
+  const P = () => { const c = ctx.config() || {}; return { ...DEFAULT_CONFIG.points, ...(c.pointsVersion === POINTS_VERSION ? c.points || {} : {}) }; };
   const T = () => ({ ...DEFAULT_CONFIG.treat, ...((ctx.config() || {}).treat || {}) });
   const waterTarget = () => ((ctx.config() || {}).water || DEFAULT_CONFIG.water).target || 8;
   const sleepTarget = (r) => Math.max(((ctx.config() || {}).sleep || DEFAULT_CONFIG.sleep).target || 7, r && r.profile && r.profile.age && r.profile.age < 18 ? 8 : 0);
   const sleepOn = (r, d) => (r.sleep || []).find((x) => x.date === d) || null;
   const stepGoal = () => ((ctx.config() || {}).steps || DEFAULT_CONFIG.steps).goal || 7500;
   /** Steps for a day: the phone's daily total if logged, otherwise steps recorded with activities. */
-  const daySteps = (r, d) => { const x = (r.steps || []).find((s) => s.date === d); return x ? x.steps : r.exercises.filter((e) => e.date === d).reduce((a, e) => a + (e.steps || 0), 0); };
+  // The phone's daily total already includes steps taken during activities, so take the larger of the two (never add them).
+  const daySteps = (r, d) => { const x = (r.steps || []).find((s) => s.date === d); const act = r.exercises.filter((e) => e.date === d).reduce((a, e) => a + (e.steps || 0), 0); return Math.max(x ? x.steps : 0, act); };
   const dayKm = (r, d) => { const k = r.exercises.filter((e) => e.date === d).reduce((a, e) => a + (e.distanceKm || 0), 0); return k || Math.round(daySteps(r, d) * 0.00075 * 10) / 10; };
   const glasses = (r, d) => ((r.water || []).find((x) => x.date === d) || {}).glasses || 0;
   const today = () => ctx.today();
@@ -153,10 +252,91 @@ export function makeEngine(ctx) {
     const checkin = (r.checkins || []).some((x) => x.date === d);
     return { food, ex, wt, wtv, task, reflect, chal, water, waterGoal, glasses: g, slept, sleepGoal, steps: stp, stepsGoal, checkin, any: checkin || food || ex || wt || task || reflect || chal || water || slept || stp > 0 };
   }
+  const activeMinutes = (r, d) => r.exercises.filter((e) => e.date === d).reduce((a, e) => a + (e.minutes || 0), 0);
+  /** The daily scorecard: the ONLY source of daily points. Each item counts once per day. */
+  /** Meals logged on a day (Breakfast or Meal 1, Lunch or Meal 2, Dinner or Meal 3; snacks do not count) and whether it was too little food. */
+  function eating(r, d) {
+    const foods = r.foods.filter((f) => f.date === d);
+    // Drinks, supplements and medicines do not make a meal (a Panado or a coffee at breakfast is not breakfast).
+    const meals = new Set(foods.filter((f) => !NOT_A_MEAL.has((FOOD_BY_ID[f.foodId] || {}).cat)).map((f) => MEAL_SLOT[f.meal]).filter(Boolean)).size;
+    const kcal = foods.reduce((a, f) => a + (f.kcal || 0), 0), onPlan = !!PLANS[(r.profile.name || "").split(" ")[0].toLowerCase()];
+    const minKcal = onPlan ? 0 : isMinor(r) ? 1200 : 800;
+    const fruit = foods.filter((f) => (FOOD_BY_ID[f.foodId] || {}).cat === "Fruit").reduce((a, f) => a + portions(f), 0);
+    const plan = PLANS[(r.profile.name || "").split(" ")[0].toLowerCase()];
+    const provitas = foods.reduce((a, f) => a + (PROVITA_EQ[f.foodId] || 0) * (f.qty || 1), 0);
+    const flags = [];
+    if (fruit > (plan ? plan.fruit : FRUIT_ALLOWANCE)) flags.push({ k: "fruit", label: "Too much fruit", how: `${fruit} fruits today. The allowance is ${plan ? plan.fruit : FRUIT_ALLOWANCE}: fruit sugar adds up` });
+    const provMax = plan ? plan.provita : 6;
+    if (provitas > provMax) flags.push({ k: "provita", label: "Too many Provitas", how: `${provitas} today. The allowance is ${provMax}` });
+    const w = weekOf(d), weekFoods = w ? r.foods.filter((f) => f.date >= w.w0 && f.date <= w.w1) : foods;
+    flags.push(...planFlags(r, d, foods, weekFoods));
+    return { meals, kcal, minKcal, onPlan, fruit, provitas, flags, tooLittle: foods.length > 0 && kcal < minKcal, enough: meals >= MEALS_NEEDED && !(kcal < minKcal) };
+  }
+  function scorecard(r, d) {
+    const st = dayStatus(r, d), p = P(), mins = activeMinutes(r, d), ruleOn = d >= EAT_RULE_FROM, eat = eating(r, d);
+    const items = [
+      { k: "checkin", icon: "👋🏾", label: "Check in", how: "Tap the big button, or log anything", pts: p.checkin, done: st.any },
+      ruleOn
+        ? { k: "food", icon: "🍽️", label: "Eat and log 3 meals", how: eat.minKcal ? `Breakfast, lunch and dinner, at least ${eat.minKcal.toLocaleString("en-ZA")} kcal` : "Meal 1, Meal 2 and Meal 3 from your plan", pts: p.food, done: eat.enough, progress: eat.enough ? "" : `${eat.meals} of ${MEALS_NEEDED} meals${eat.tooLittle && eat.meals >= MEALS_NEEDED ? ` · only ${eat.kcal} kcal` : ""}`, warn: !eat.enough }
+        : { k: "food", icon: "🍽️", label: "Log your food", how: "At least one meal", pts: p.food, done: st.food },
+      { k: "move", icon: "👟", label: "Move", how: `${MOVE_MINUTES} active minutes or ${stepGoal().toLocaleString("en-ZA")} steps`, pts: p.exercise, done: mins >= MOVE_MINUTES || st.stepsGoal, progress: mins >= MOVE_MINUTES || st.stepsGoal ? "" : mins ? `${mins} of ${MOVE_MINUTES} min` : st.steps ? `${st.steps.toLocaleString("en-ZA")} steps` : "" },
+      { k: "water", icon: "glass", label: "Drink water", how: `${waterTarget()} glasses`, pts: p.water, done: st.waterGoal, progress: st.glasses && !st.waterGoal ? `${st.glasses} of ${waterTarget()}` : "" },
+      { k: "sleep", icon: "🌙", label: "Sleep well", how: `${sleepTarget(r)} hours or more`, pts: p.sleep, done: st.sleepGoal },
+      { k: "journal", icon: "📓", label: "Journal", how: "Tick what you did today", pts: p.reflect, done: st.reflect },
+    ];
+    const link = TASK_LINK[dow(d)];
+    if (link) {
+      const linkedDone = link[0] === "move" ? mins >= 30 || st.task : (items.find((x) => x.k === link[0]) || {}).done || st.task;
+      items.push({ k: "task", icon: "🎯", label: "Daily challenge", how: `${DAILY_TASKS[dow(d)]} · ticks itself with ${link[1]}, no extra points`, pts: 0, done: !!linkedDone, auto: true });
+    } else items.push({ k: "task", icon: "🎯", label: "Daily challenge", how: DAILY_TASKS[dow(d)], pts: p.task, done: st.task });
+    if (isWeighDay(d)) items.push({ k: "weighin", icon: "⚖️", label: "Official weigh in", how: "Recorded by the administrator", pts: p.weighin, done: st.wtv, adminOnly: true });
+    // Starving or skipping meals costs points once the day is over (only from the rule date, never on days with nothing logged: those are missed days).
+    if (ruleOn && d < today() && st.any && !eat.enough) items.push({ k: "eat", icon: "⚠️", label: eat.meals < MEALS_NEEDED ? "Skipped meals" : "Too little food", how: eat.meals < MEALS_NEEDED ? `Only ${eat.meals} of ${MEALS_NEEDED} meals logged` : `Only ${eat.kcal} kcal: starving slows progress and harms health`, pts: p.eatPenalty, done: true, penalty: true });
+    // Bad habit flags (no points): e.g. more than the daily fruit allowance.
+    for (const f of eat.flags) items.push({ k: "flag", icon: "🚩", label: f.label, how: f.how, pts: 0, flag: true, done: false });
+    const max = items.filter((x) => !x.adminOnly && !x.penalty && !x.flag).reduce((a, x) => a + x.pts, 0);
+    return { items, max, taskDone: !!(items.find((x) => x.k === "task") || {}).done, earned: st.any ? items.filter((x) => x.done).reduce((a, x) => a + x.pts, 0) : 0 };
+  }
+  /** The five healthy habits for a day (used for the habit charts). */
+  const HABIT_KEYS = ["food", "move", "water", "sleep", "journal"];
+  function habitsOn(r, d) { const it = scorecard(r, d).items, o = {}; for (const k of HABIT_KEYS) o[k] = !!(it.find((x) => x.k === k) || {}).done; return o; }
+  /** Body mass index = kg / m². Adult categories (WHO); under 18s need a BMI for age chart instead. */
+  function bmi(r, kg) {
+    const h = r.profile.heightCm; if (!h || !kg) return null;
+    const v = kg / Math.pow(h / 100, 2), minor = isMinor(r);
+    const cat = minor ? null : v < 18.5 ? "Underweight" : v < 25 ? "Healthy weight" : v < 30 ? "Overweight" : v < 35 ? "Obesity class I" : v < 40 ? "Obesity class II" : "Obesity class III";
+    return { value: Math.round(v * 10) / 10, cat, minor };
+  }
+  /**
+   * Weekly catch up ledger (information only: it never changes points, because past days are locked).
+   * For days a..b it adds up what was needed and what was done. A shortfall becomes a "loan" to cover later in the week.
+   */
+  function ledger(r, a, b) {
+    const s = S(), from = [a, s.start, r.profile.joinedDate || a].sort().pop(), to = b < s.end ? b : s.end;
+    const e = energy(r), minor = isMinor(r), wt = waterTarget(), stg = sleepTarget(r), sg = stepGoal();
+    const L = { days: 0, move: { need: 0, done: 0 }, water: { need: 0, done: 0 }, foodDays: 0, sleepDays: 0, journalDays: 0, kcalOver: null, missedFood: [], missedMove: [] };
+    if (e && !minor && !habitsOnly(r)) L.kcalOver = 0;
+    for (let d = from; d <= to; d = addDays(d, 1)) {
+      if (holiday(d)) continue;
+      L.days++;
+      const mins = activeMinutes(r, d), stepsOk = daySteps(r, d) >= sg;
+      L.move.need += MOVE_MINUTES; L.move.done += stepsOk ? Math.max(mins, MOVE_MINUTES) : mins;
+      if (!stepsOk && mins < MOVE_MINUTES) L.missedMove.push(d);
+      L.water.need += wt; L.water.done += Math.min(glasses(r, d), wt + 4);
+      const t = dayTotals(r, d);
+      if (r.foods.some((f) => f.date === d)) { L.foodDays++; if (L.kcalOver !== null) L.kcalOver += t.eaten - e.target - t.burned; } else L.missedFood.push(d);
+      const sl = sleepOn(r, d); if (sl && sl.hours >= stg) L.sleepDays++;
+      if (r.reflections.some((x) => x.date === d)) L.journalDays++;
+    }
+    L.move.owed = Math.max(0, L.move.need - L.move.done);
+    L.water.owed = Math.max(0, L.water.need - L.water.done);
+    if (L.kcalOver !== null) L.kcalOver = Math.round(L.kcalOver);
+    return L;
+  }
   function dayPoints(r, d, t = today()) {
-    const st = dayStatus(r, d), p = P();
-    if (st.any) return p.checkin + (st.ex ? p.exercise : 0) + (st.wtv && isWeighDay(d) ? p.weighin : 0) + (st.task ? p.task : 0) + (st.reflect ? p.reflect : 0) + (st.waterGoal ? p.water : 0) + (st.sleepGoal ? p.sleep : 0) + (st.stepsGoal ? p.steps : 0) + (holiday(d) ? p.holiday : 0);
-    return d < t && !holiday(d) && !beforeJoin(r, d) ? p.missed : 0;
+    const st = dayStatus(r, d);
+    if (st.any) return scorecard(r, d).earned;
+    return d < t && !holiday(d) && !beforeJoin(r, d) ? P().missed : 0;
   }
   // Nobody is penalised for days before they joined the challenge.
   const beforeJoin = (r, d) => !!(r.profile.joinedDate && d < r.profile.joinedDate);
@@ -354,7 +534,7 @@ export function makeEngine(ctx) {
 
   return {
     weighDays, isWeighDay, nextWeighDay, lastWeighDay, startWeight, weightOn, latestWeight, isMinor, isChild, habitsOnly, maxRate, planRate,
-    calorieFloor, energy, dayTotals, dayStatus, dayPoints, challengeWeeks, currentWeek, challengeMonths, weeks, treats, score, periodScore,
+    calorieFloor, energy, dayTotals, dayStatus, dayPoints, scorecard, activeMinutes, ledger, eating, habitsOn, HABIT_KEYS, bmi, beforeJoin, challengeWeeks, currentWeek, challengeMonths, weeks, treats, score, periodScore,
     bestStreak, challengeDay, computeAll, P, T, glasses, waterTarget, sleepTarget, sleepOn, stepGoal, daySteps, dayKm, officialWeightOn,
   };
 }

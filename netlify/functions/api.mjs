@@ -12,7 +12,7 @@
 //   SESSION_SECRET  long random text used to sign sign in tokens
 import crypto from "node:crypto";
 import { getStore } from "@netlify/blobs";
-import { JOURNAL_CHECKS, makeEngine, DEFAULT_CONFIG, DEFAULT_SETTINGS, AVATARS, PRIVATE_FIELDS, SEALED_FIELDS, finaleTime, normRecord, todaySA as realToday, addDays } from "../../public/core.js";
+import { JOURNAL_CHECKS, makeEngine, DEFAULT_CONFIG, DEFAULT_SETTINGS, AVATARS, PRIVATE_FIELDS, SEALED_FIELDS, finaleTime, normRecord, POINTS_VERSION, todaySA as realToday, addDays } from "../../public/core.js";
 import { FOOD_BY_ID } from "../../public/foods.js";
 
 const env = (k) => (globalThis.Netlify?.env?.get?.(k) ?? process.env[k] ?? "");
@@ -24,18 +24,19 @@ const SESSION_DAYS = 30;
 
 // Starting data from the crew's notebook (23 Nov 2024 "before" and Saturday 14 Nov 2026 start), with target weights.
 const SEED = {
-  benadette: { name: "Benadette", sex: "f", before: 100.9, start: 70.9, goal: 62 },
+  benadette: { name: "Benadette", sex: "f", before: 100.9, start: 70.9, goal: 62, age: 43 },
   thandi: { name: "Thandi", sex: "f", before: 118.5, start: 88.5, goal: 70 },
   kgotso: { name: "Kgotso", sex: "m", before: 76.4, start: 52.8, goal: 45 },
-  judith: { name: "Judith", sex: "f", before: 94.0, start: 77.6, goal: 60 },
+  judith: { name: "Judith", sex: "f", before: 94.0, start: 77.6, goal: 60, age: 15 }, // ages from the printed eating plans
   patrick: { name: "Patrick", sex: "m", before: 79.8, start: 64.4, goal: 50 },
   thabo: { name: "Thabo", sex: "m", before: 116.3, start: 99.3, goal: 85 },
+  peter: { name: "Peter", sex: "m", before: 129.0, start: null, goal: 85 }, // Peter Kisembo, 23 Nov 2024 (no 14 Nov 2026 weight on record)
 };
 function seeded(m) {
   const x = SEED[m], r = normRecord({});
   if (!x) return r;
-  r.profile = { name: x.name, sex: x.sex, age: null, heightCm: null, startWeight: x.start, goalWeight: x.goal, activity: 1.375, rate: 0.5, kidPlan: "controlled", beforeWeight: x.before, beforeDate: "2024-11-23" };
-  r.weights = [{ id: "start-2026-11-14", date: "2026-11-14", kg: x.start, verified: true }];
+  r.profile = { name: x.name, sex: x.sex, age: x.age || null, heightCm: null, startWeight: x.start, goalWeight: x.goal, activity: 1.375, rate: 0.5, kidPlan: "controlled", beforeWeight: x.before, beforeDate: "2024-11-23" };
+  r.weights = x.start ? [{ id: "start-2026-11-14", date: "2026-11-14", kg: x.start, verified: true }] : [];
   return r;
 }
 
@@ -83,7 +84,7 @@ async function listAccounts() {
 }
 const getAccount = (id) => getJ("acct/" + id);
 const saveAccount = (a) => setJ("acct/" + a.id, a);
-const getConfig = async () => { const c = (await getJ("_config")) || {}; return { ...DEFAULT_CONFIG, ...c, points: { ...DEFAULT_CONFIG.points, ...(c.points || {}) }, treat: { ...DEFAULT_CONFIG.treat, ...(c.treat || {}) }, water: { ...DEFAULT_CONFIG.water, ...(c.water || {}) }, sleep: { ...DEFAULT_CONFIG.sleep, ...(c.sleep || {}) }, steps: { ...DEFAULT_CONFIG.steps, ...(c.steps || {}) }, finale: { ...DEFAULT_CONFIG.finale, ...(c.finale || {}) }, prizes: { ...DEFAULT_CONFIG.prizes, ...(c.prizes || {}) }, pin: { ...DEFAULT_CONFIG.pin, ...(c.pin || {}) } }; };
+const getConfig = async () => { const c = (await getJ("_config")) || {}; return { ...DEFAULT_CONFIG, ...c, points: { ...DEFAULT_CONFIG.points, ...(c.pointsVersion === POINTS_VERSION ? c.points || {} : {}) }, pointsVersion: POINTS_VERSION, treat: { ...DEFAULT_CONFIG.treat, ...(c.treat || {}) }, water: { ...DEFAULT_CONFIG.water, ...(c.water || {}) }, sleep: { ...DEFAULT_CONFIG.sleep, ...(c.sleep || {}) }, steps: { ...DEFAULT_CONFIG.steps, ...(c.steps || {}) }, finale: { ...DEFAULT_CONFIG.finale, ...(c.finale || {}) }, prizes: { ...DEFAULT_CONFIG.prizes, ...(c.prizes || {}) }, pin: { ...DEFAULT_CONFIG.pin, ...(c.pin || {}) } }; };
 const getSettings = async () => (await getJ("_settings")) || DEFAULT_SETTINGS;
 async function getRecord(memberId) { return normRecord((await getJ("member/" + memberId)) || (await getJ(memberId)) || seeded(memberId)); }
 const saveRecord = (memberId, r) => setJ("member/" + memberId, r);
@@ -127,6 +128,17 @@ async function buildState(viewer, { adminView = false } = {}) {
   const participants = active.map((a, i) => ({ memberId: a.memberId, name: a.name, avatar: a.avatar, group: a.group || "", color: COLORS[i % COLORS.length], accountId: a.id }));
   const records = {};
   await Promise.all(participants.map(async (p) => { records[p.memberId] = await getRecord(p.memberId); }));
+  // Fill in a "before" record (23 Nov 2024) for anyone whose first name matches the notebook, without changing anything they logged.
+  await Promise.all(participants.map(async (p) => {
+    const x = SEED[p.name.split(/\s+/)[0].toLowerCase()], r = records[p.memberId];
+    if (!x || !r) return;
+    if (r.profile.beforeWeight && (r.profile.age || !x.age)) return;
+    if (!r.profile.beforeWeight) { r.profile.beforeWeight = x.before; r.profile.beforeDate = "2024-11-23"; }
+    if (!r.profile.age && x.age) r.profile.age = x.age;
+    if (!r.profile.startWeight && x.start) r.profile.startWeight = x.start;
+    if (!r.profile.goalWeight && x.goal) r.profile.goalWeight = x.goal;
+    await saveRecord(p.memberId, r);
+  }));
   const today = todaySA();
   const engine = makeEngine({ settings: () => settings, config: () => config, today: () => today, challengeDefs: () => challenges, adjustments: () => adjustments });
   const { summaries, results } = engine.computeAll(participants, records);
@@ -156,10 +168,20 @@ async function buildState(viewer, { adminView = false } = {}) {
   }
   const t = today;
   const aggregates = { lostKg: 0, since2024: 0 };
+  // Team habits over the last 7 days (effort only, no weights): how often the group reached each habit.
+  {
+    const t = engine.challengeDay().phase === "before" ? null : today, st = settings.start;
+    if (t) {
+      const from = addDays(t, -6) > st ? addDays(t, -6) : st, team = {};
+      for (const k of engine.HABIT_KEYS) team[k] = { done: 0, possible: 0 };
+      for (const p of participants) { const r = records[p.memberId]; for (let d = from; d <= t; d = addDays(d, 1)) { if (engine.beforeJoin(r, d)) continue; const h = engine.habitsOn(r, d); for (const k of engine.HABIT_KEYS) { team[k].possible++; if (h[k]) team[k].done++; } } }
+      aggregates.team = { from, to: t, habits: team, people: participants.length };
+    }
+  }
   for (const p of participants) { const sm = summaries[p.memberId], r = records[p.memberId]; if (sm.lostKg > 0) aggregates.lostKg += sm.lostKg; const bw = r.profile.beforeWeight, cw = engine.latestWeight(r); if (bw && cw && bw > cw) aggregates.since2024 += bw - cw; }
   const out = {
     aggregates,
-    serverToday: today, settings, finale: { revealed, revealAt }, config: { points: config.points, treat: config.treat, water: config.water, sleep: config.sleep, steps: config.steps, prizes: config.prizes, rulesText: config.rulesText, privacyText: config.privacyText },
+    serverToday: today, settings, finale: { revealed, revealAt }, config: { points: config.points, pointsVersion: config.pointsVersion, treat: config.treat, water: config.water, sleep: config.sleep, steps: config.steps, prizes: config.prizes, rulesText: config.rulesText, privacyText: config.privacyText },
     me: publicAccount(viewer), participants, summaries: shared, results,
     myRecord: viewer.memberId ? records[viewer.memberId] || (await getRecord(viewer.memberId)) : null,
     challenges: challenges.filter((c) => c.end >= addDays(t, -31)),
@@ -186,7 +208,19 @@ const TYPES = ["foods", "exercises", "weights", "treats", "tasks", "reflections"
 function cleanEntry(type, e = {}, today) {
   const base = { id: str(e.id, 40) || rid(6), date: isDate(e.date) ? e.date : null };
   if (!base.date || base.date > today || base.date < "2026-11-01") throw httpErr(400, "That date cannot be used.");
-  if (type === "foods") {
+  if (type === "foods") return { ...cleanFood(e, base, today), time: eatenTime(e.time) };
+  return cleanOther(type, e, base, today);
+}
+// Time eaten (HH:MM, South African time). Defaults to now; cannot be later than now.
+const nowSAtime = () => new Date().toLocaleTimeString("en-GB", { timeZone: "Africa/Johannesburg", hour: "2-digit", minute: "2-digit", hour12: false });
+function eatenTime(t) {
+  const now = nowSAtime();
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(t || ""))) return now;
+  if (!env("TEST_TODAY")) { const [h, m] = now.split(":").map(Number), lim = Math.min(23 * 60 + 59, h * 60 + m + 10); const [th, tm] = t.split(":").map(Number); if (th * 60 + tm > lim) throw httpErr(400, "The time eaten cannot be later than now."); }
+  return t;
+}
+function cleanFood(e, base, today) {
+  {
     const meal = str(e.meal, 20) || "Snack", qty = Math.min(5, Math.max(0.25, Number(e.qty) || 1));
     const f = FOOD_BY_ID[e.foodId];
     // Known foods: the standard calorie count is applied here on the server, whatever the app sends.
@@ -199,6 +233,8 @@ function cleanEntry(type, e = {}, today) {
     if (kcal === null || !str(e.name, 80)) throw httpErr(400, "Please choose a food from the list, or enter a custom food with its calories.");
     return { ...base, meal, name: str(e.name, 80), kcal, custom: true };
   }
+}
+function cleanOther(type, e, base, today) {
   if (type === "exercises") {
     const kcal = num(e.kcal, 0, 5000), minutes = num(e.minutes, 1, 600);
     if (kcal === null || minutes === null || !str(e.activity, 80)) throw httpErr(400, "Please enter the activity and minutes.");
@@ -315,6 +351,12 @@ async function handleData(req, body) {
     if (body.type === "challenges") r.challenges = r.challenges.filter((x) => !(x.date === e.date && x.challengeId === e.challengeId));
     r[body.type].push(e);
     r[body.type] = r[body.type].slice(-5000);
+  } else if (body.action === "addMany" && body.type === "foods" && Array.isArray(body.entries) && body.entries.length && body.entries.length <= 8) {
+    // One tap plan meal: the protein and its vegetables are saved together.
+    const label = str(body.planLabel, 60);
+    const list = body.entries.map((x) => ({ ...cleanEntry("foods", x, today), ...(label ? { planLabel: label } : {}) }));
+    if (list.some((e) => e.date !== today)) throw httpErr(400, "You can only log things for today. Missed days cannot be filled in afterwards.");
+    r.foods.push(...list); r.foods = r.foods.slice(-5000);
   } else if (body.action === "delete" && TYPES.includes(body.type)) {
     const target = r[body.type].find((e) => e.id === body.id);
     if (target && target.date !== today) throw httpErr(400, "Only today's entries can be removed. Past days are locked.");
@@ -382,7 +424,7 @@ async function handleAdmin(req, body) {
     const c = body.config || {}, cur = await getConfig(), P = {};
     for (const k of Object.keys(DEFAULT_CONFIG.points)) P[k] = num(c.points?.[k] ?? cur.points[k], -100, 1000);
     const next = {
-      points: P, treat: { minutes: num(c.treat?.minutes ?? cur.treat.minutes, 30, 1000), kcal: num(c.treat?.kcal ?? cur.treat.kcal, 0, 1000) },
+      points: P, pointsVersion: POINTS_VERSION, treat: { minutes: num(c.treat?.minutes ?? cur.treat.minutes, 30, 1000), kcal: num(c.treat?.kcal ?? cur.treat.kcal, 0, 1000) },
       pin: { maxAttempts: num(c.pin?.maxAttempts ?? cur.pin.maxAttempts, 3, 10), lockMinutes: num(c.pin?.lockMinutes ?? cur.pin.lockMinutes, 1, 1440), hardLockAfter: num(c.pin?.hardLockAfter ?? cur.pin.hardLockAfter, 5, 50) },
       water: { target: num(c.water?.target ?? cur.water?.target ?? 8, 1, 20) },
       sleep: { target: num(c.sleep?.target ?? cur.sleep?.target ?? 7, 4, 12) },
@@ -451,6 +493,7 @@ async function handleAdmin(req, body) {
   } else if (a === "profile") {
     const r = await getRecord(str(body.memberId, 40)), p = body.profile || {};
     for (const k of ["startWeight", "goalWeight", "beforeWeight"]) if (k in p) r.profile[k] = num(p[k], 10, 400);
+    if ("heightCm" in p) r.profile.heightCm = num(p.heightCm, 90, 230);
     await saveRecord(str(body.memberId, 40), r); await log("corrected participant record", { target: body.memberId, detail: JSON.stringify(p) });
   } else throw httpErr(400, "Unknown admin action.");
   return json(await buildState(admin, { adminView: true }));

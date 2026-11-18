@@ -2,7 +2,7 @@
    Talks to the secure API in netlify/functions/api.mjs. Points, rankings and awards are calculated on the
    server with the same rules file (core.js) that this app uses for display. */
 import { FOODS, FOOD_BY_ID, SERVINGS, GRAM_CHIPS, foodKcal, searchFoods } from "./foods.js";
-import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BADGES, HOLIDAYS, MOODS, SLEEP_QUALITY, JOURNAL_CHECKS, KCAL_PER_KG, todaySA, addDays, diffDays, pad, dow, holiday, emptyRecord, normRecord } from "./core.js";
+import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BADGES, HOLIDAYS, MOODS, SLEEP_QUALITY, JOURNAL_CHECKS, KCAL_PER_KG, todaySA, addDays, diffDays, pad, dow, holiday, emptyRecord, normRecord } from "./core.js";
 
 (() => {
   "use strict";
@@ -51,6 +51,15 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
     ["Social dancing", 4.5, 0, 0, "Other"], ["Skipping rope", 11.8, 0, 0, "Other"], ["Soccer / netball, casual", 7.0, 0, 0, "Other"], ["Tennis", 7.3, 0, 0, "Other"],
     ["Basketball", 6.5, 0, 0, "Other"], ["Gardening", 3.8, 0, 0, "Other"], ["House cleaning", 3.3, 0, 0, "Other"],
   ];
+  // One tap activities: [button label, activity name, minutes, km or floors]
+  const QUICK_MOVES = [["🚶🏾 Walk 30 min", "Walking, brisk", 30], ["🏃🏾 Run 5 km", "Run 5 km (parkrun)", 35], ["🏢 Stairs to floor 15 and back", "Stairs: up to a floor and back down", 8, 15], ["🚴🏾 Spinning 45 min", "Spinning class (indoor cycling)", 45], ["🏋🏾 Gym weights 45 min", "Weights / strength training", 45], ["💃🏾 Dance 30 min", "Social dancing", 30]];
+  function quickEntry(q) {
+    const i = ACTIVITIES.findIndex((x) => x[0] === q[1]), act = ACTIVITIES[i], w = latestWeight(rec(state.me)) || 70, mins = q[2];
+    if (act[5] === "floors") { const up = q[3] * 20; return { activity: `Stairs to floor ${q[3]} and back`, minutes: mins, kcal: Math.round(up * 0.16 * w / 70), distanceKm: 0, steps: up * 2 }; }
+    if (typeof act[5] === "number") return { activity: act[0], minutes: mins, kcal: Math.round(act[1] * w * act[5]), distanceKm: act[5], steps: Math.round(act[5] * act[3]) };
+    const km = act[2] ? Math.round((act[2] * mins) / 60 * 10) / 10 : 0;
+    return { activity: act[0], minutes: mins, kcal: Math.round(act[1] * w * mins / 60), distanceKm: km, steps: act[3] ? Math.round(km * act[3]) : 0 };
+  }
   const ACT_GROUPS = ["Walking and running", "Distance", "Gym", "Stairs", "Other"];
 
   // Stoic motivation. Translations: Marcus Aurelius (George Long, 1862), Seneca (R. M. Gummere, 1917), Epictetus (George Long, 1890).
@@ -194,7 +203,7 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
   // ---------- Rules engine (the same code the server uses for the official points) ----------
   const E = makeEngine({ settings, config: () => state.config, today: todayStr, challengeDefs: () => state.challenges, adjustments: () => [] });
   const { weighDays, isWeighDay, nextWeighDay, lastWeighDay, startWeight, weightOn, latestWeight, isMinor, isChild, habitsOnly, maxRate,
-    planRate, calorieFloor, energy, dayTotals, dayStatus, dayPoints, weeks, treats, challengeDay, challengeWeeks, currentWeek, challengeMonths, glasses, waterTarget, sleepTarget, sleepOn, stepGoal, daySteps, dayKm, officialWeightOn } = E;
+    planRate, calorieFloor, energy, dayTotals, dayStatus, dayPoints, scorecard, activeMinutes, ledger, eating, habitsOn, HABIT_KEYS, bmi, weeks, treats, challengeDay, challengeWeeks, currentWeek, challengeMonths, glasses, waterTarget, sleepTarget, sleepOn, stepGoal, daySteps, dayKm, officialWeightOn } = E;
   const treatOn = (r, d) => (r.treats || []).some((t) => t.date === d);
   const sortByDate = (arr) => [...arr].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const ZERO = {
@@ -208,10 +217,15 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
 
   // ---------- UI helpers ----------
   let toastTimer;
-  function toast(html, ms = 3800) {
-    const el = $("#toast"); el.innerHTML = html; el.classList.remove("hidden");
+  // Messages with a Stoic quote stay up for 15 seconds so there is time to read them. Tap the message to close it.
+  function toast(html, ms = 4500) {
+    const el = $("#toast"), quote = html.includes("“");
+    if (quote) ms = Math.max(ms, 15000);
+    el.innerHTML = html + (quote ? `<span class="toastclose">Tap to close ✕</span>` : "");
+    el.classList.remove("hidden");
     clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.add("hidden"), ms);
   }
+  document.getElementById("toast").addEventListener("click", () => { clearTimeout(toastTimer); document.getElementById("toast").classList.add("hidden"); });
   function confetti() {
     const box = $("#confetti"); const colors = ["#E4572E", "#F2B134", "#2E8B57", "#2F7FC1", "#D6457F"];
     for (let i = 0; i < 36; i++) {
@@ -472,31 +486,137 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
         <div class="stat"><b>🎯 ${pct}%</b><span>tasks done</span></div>
       </div></section>`;
   }
+  // Today's scorecard: every point a person can earn today, in one list. Tap a line to log it.
   function activitiesCard() {
-    const r = rec(state.me), d = state.date, st = dayStatus(r, d), isToday = d === todayStr();
-    const pts = dayPoints(r, d), refl = r.reflections.find((x) => x.date === d), task = DAILY_TASKS[dow(d)];
-    const items = [
-      [st.ex, "Complete a movement activity", `+${POINTS.exercise}`, `data-go="move"`],
-      [st.task, `Healthy habit: ${task}`, `+${POINTS.task}`, `data-hs="task" data-date="${d}"`],
-      [st.reflect, refl ? `📓 Journal done ${refl.mood ? MOODS[refl.mood] : ""} ${(refl.checks || []).map((c) => (JOURNAL_CHECKS.find((j) => j[0] === c) || [, ""])[1]).slice(0, 5).join("")}` : "📓 Journal: tap what you did today", `+${POINTS.reflect}`, `data-go="journal"`],
-      isWeighDay(d) ? [st.wtv, st.wtv ? "⚖️ Official weigh in recorded" : "⚖️ Official weigh in today: see the administrator", `+${POINTS.weighin}`, `data-go="me"`] : null,
-    ].filter(Boolean);
-    const core3 = items.slice(0, 3).filter((x) => x[0]).length, g = glasses(r, d), wt = waterTarget();
-    return `<section class="card">
-      <div class="row between"><h2>${isToday ? "Today's activities" : "Activities for " + shortDate(d)}</h2><span class="pill ${pts < 0 ? "warn" : pts > 0 ? "good" : ""}">${pts > 0 ? "+" : ""}${pts} pts</span></div>
-      ${(() => { const sl = sleepOn(r, d), stg = sleepTarget(r), stp = daySteps(r, d), sg = stepGoal(), km = dayKm(r, d);
-        return `<div class="tiles">
-          <div class="tile water ${g >= wt ? "done" : ""}"><div class="tile-top" data-go="water">${glassSvg(true)}<b>${g}<small>/${wt}</small></b></div><small data-go="water">glasses</small>
-            <button class="tile-plus" data-water="1" aria-label="One more glass">+ 1</button></div>
-          <div class="tile sleep ${sl && sl.hours >= stg ? "done" : ""}" data-go="sleep" role="button" tabindex="0"><div class="tile-top">🌙<b>${sl ? fmt(sl.hours, 1) : "–"}<small> h</small></b></div><small>${sl ? "sleep" + (sl.quality ? " " + SLEEP_QUALITY[sl.quality] : "") : "log sleep"}</small>
-            <div class="bar"><i style="width:${sl ? Math.min(100, (sl.hours / stg) * 100) : 0}%"></i></div></div>
-          <div class="tile steps ${stp >= sg ? "done" : ""}" data-go="move" role="button" tabindex="0"><div class="tile-top">👟<b>${stp >= 10000 ? fmt(stp / 1000, 1) + "k" : fmt(stp)}</b></div><small>steps · ${fmt(km, 1)} km</small>
-            <div class="bar"><i style="width:${Math.min(100, (stp / sg) * 100)}%"></i></div></div>
-        </div>`; })()}
-      <div class="checks">${items.map(([done, label, p, attr]) => `<div class="check click ${done ? "done" : ""}" ${attr} role="button" tabindex="0"><span class="tick">${done ? "✓" : ""}</span><span class="grow">${esc(label)}</span><span class="pts">${p}</span></div>`).join("")}</div>
-      <p class="note">${core3} of 3 done today.</p>
+    const r = rec(state.me), d = state.date, sc = scorecard(r, d), pts = dayPoints(r, d);
+    const g = glasses(r, d), wt = waterTarget(), sl = sleepOn(r, d), stg = sleepTarget(r), stp = daySteps(r, d), sg = stepGoal(), km = dayKm(r, d);
+    const attr = (it) => it.k === "checkin" ? (it.done ? "" : `data-act="checkin"`) : it.k === "task" ? (it.auto ? `data-go="${({ 1: "move", 3: "water", 4: "sleep", 0: "journal" })[dow(d)]}"` : `data-hs="task" data-date="${d}"`) : it.k === "weighin" ? `data-go="me"` : `data-go="${it.k === "journal" ? "journal" : it.k}"`;
+    const icon = (it) => it.icon === "glass" ? glassSvg(true, "sm") : it.icon;
+    return `<section class="card scorecard">
+      <div class="row between"><h2>⭐ Today's points</h2><span class="pill ${pts > 0 ? "good" : ""}">${pts} of ${sc.max}</span></div>
+      <div class="scbar"><i style="width:${Math.min(100, (pts / sc.max) * 100)}%"></i></div>
+      <div class="sclist">${(() => { const fl = sc.items.filter((x) => x.flag); return fl.length > 3 ? [...sc.items.filter((x) => !x.flag), ...fl.slice(0, 3), { k: "flag", flag: true, icon: "🚩", label: `${fl.length - 3} more flags`, how: "Open Food to see them all", pts: 0 }] : sc.items; })().map((it) => `<div class="scrow ${it.penalty || it.flag ? "penalty" : it.done ? "done" : ""}" ${it.penalty ? "" : it.flag ? `data-go="food"` : attr(it)} role="button" tabindex="0">
+        <span class="scicon">${icon(it)}</span>
+        <span class="grow"><b>${esc(it.label)}</b><small>${esc(it.how)}${it.progress ? ` · <em>${esc(it.progress)}</em>` : ""}${it.warn && d === todayStr() && it.k === "food" ? `<br><span class="warnline">⚠️ Fewer than 3 meals by tonight costs ${Math.abs(POINTS.eatPenalty)} points${saHour() >= 18 ? ". Last meal before 9 PM" : ""}</span>` : ""}</small></span>
+        <span class="scpts">${it.flag ? "Bad habit" : it.penalty ? it.pts : `${it.done ? "✓ " : ""}${it.auto ? "" : "+" + it.pts}`}</span></div>`).join("")}</div>
+      <div class="tiles" style="margin-top:12px">
+        <div class="tile water ${g >= wt ? "done" : ""}"><div class="tile-top" data-go="water">${glassSvg(true)}<b>${g}<small>/${wt}</small></b></div><small data-go="water">glasses</small>
+          <button class="tile-plus" data-water="1" aria-label="One more glass">+ 1</button></div>
+        <div class="tile sleep ${sl && sl.hours >= stg ? "done" : ""}" data-go="sleep" role="button" tabindex="0"><div class="tile-top">🌙<b>${sl ? fmt(sl.hours, 1) : "–"}<small> h</small></b></div><small>${sl ? "sleep" + (sl.quality ? " " + SLEEP_QUALITY[sl.quality] : "") : "log sleep"}</small>
+          <div class="bar"><i style="width:${sl ? Math.min(100, (sl.hours / stg) * 100) : 0}%"></i></div></div>
+        <div class="tile steps ${stp >= sg ? "done" : ""}" data-go="move" role="button" tabindex="0"><div class="tile-top">👟<b>${stp >= 10000 ? fmt(stp / 1000, 1) + "k" : fmt(stp)}</b></div><small>steps · ${fmt(km, 1)} km</small>
+          <div class="bar"><i style="width:${Math.min(100, (stp / sg) * 100)}%"></i></div></div>
+      </div>
+      <details class="fold"><summary>How points work</summary>
+        <ul class="howpts">
+          <li>Each line above counts <b>once a day</b>. Logging more of the same thing does not add extra points.</li>
+          <li>On Monday, Wednesday, Thursday and Sunday the daily challenge is the same as a habit above, so it ticks itself and adds no extra points.</li>
+          <li>Eat enough: log 3 meals every day. Skipping meals or starving (under 800 kcal for adults, 1 200 for under 18s; people on a clinic plan just need their 3 plan meals) costs <b>${POINTS.eatPenalty} points</b> the next day.</li>
+          <li>A day with nothing logged: <b>${POINTS.missed} points</b>. Public holidays and days before you joined never lose points.</li>
+          <li>Official Saturday weigh in (recorded by the administrator): <b>+${POINTS.weighin}</b>.</li>
+          <li>Treat week: check in every day and move ${TREAT.minutes} minutes in the week: <b>+${POINTS.treatBonus}</b> and a treat token.</li>
+          <li>Weight lost counts separately and privately, only from official weigh ins, up to a safe pace.</li>
+        </ul></details>
     </section>`;
   }
+  // Early signs of habits forming: my last 7 days as a habit grid, my daily points, and the team's habits this week.
+  const HABIT_META = { food: ["🍽️", "Food"], move: ["👟", "Move"], water: ["glass", "Water"], sleep: ["🌙", "Sleep"], journal: ["📓", "Journal"] };
+  function habitsCard() {
+    const r = rec(state.me), t = todayStr(), s0 = settings().start; if (t < s0) return "";
+    const from0 = r.profile.joinedDate && r.profile.joinedDate > s0 ? r.profile.joinedDate : s0;
+    const days = []; for (let i = 6; i >= 0; i--) { const d = addDays(t, -i); if (d >= s0) days.push(d); }
+    const grid = days.map((d) => habitsOn(r, d));
+    const hi = (k) => HABIT_META[k][0] === "glass" ? glassSvg(true, "sm") : HABIT_META[k][0];
+    // Current run for each habit (today counts if done; otherwise the run up to yesterday still stands).
+    const run = (k) => { let n = 0, d = habitsOn(r, t)[k] ? t : addDays(t, -1); while (d >= from0 && habitsOn(r, d)[k]) { n++; d = addDays(d, -1); } return n; };
+    const runs = HABIT_KEYS.map((k) => [k, run(k)]).sort((a, b) => b[1] - a[1]);
+    const signs = runs.filter(([, n]) => n >= 2).slice(0, 3);
+    const pts = days.map((d) => Math.max(0, dayPoints(r, d)));
+    const team = state.aggregates && state.aggregates.team;
+    return `<section class="card">
+      <h2>🌱 Habits forming</h2>
+      ${signs.length ? `<div class="signs">${signs.map(([k, n]) => `<div class="sign">${hi(k)} <b>${HABIT_META[k][1]}: ${n} days in a row</b></div>`).join("")}</div>
+        <p class="note" style="margin-top:6px">Research suggests a new habit takes about 66 days of repetition to feel automatic (Lally et al., 2010). Your best run is on day <b>${runs[0][1]}</b> of 66.</p>`
+        : `<p class="note">Do the same healthy thing two days in a row and your first habit signs appear here.</p>`}
+      <div class="hgrid" style="grid-template-columns:72px repeat(${days.length},1fr)">
+        <span></span>${days.map((d) => `<small class="hday">${fmtDate(d, { weekday: "narrow" })}</small>`).join("")}
+        ${HABIT_KEYS.map((k) => `<span class="hlab">${hi(k)} ${HABIT_META[k][1]}</span>${grid.map((g, i) => `<span class="hdot ${g[k] ? "on" : days[i] === t ? "today" : ""}">${g[k] ? "✓" : ""}</span>`).join("")}`).join("")}
+      </div>
+      ${days.length >= 3 ? `<div class="cblock" style="margin-top:10px"><div class="chead"><span class="cicon">⭐</span><div><b>My daily points</b><small>last ${days.length} days</small></div><div class="cbig">${fmt(pts.reduce((a, b) => a + b, 0))}</div></div>
+        ${barChart({ days, values: pts, color: "#F2B134", goal: 15, label: "points", short: true })}</div>` : ""}
+      ${team && team.people > 1 ? `<div class="cblock"><div class="chead"><span class="cicon">🤝🏾</span><div><b>Team habits</b><small>how often all ${team.people} of us reached each habit, last 7 days</small></div></div>
+        <div class="teambars">${HABIT_KEYS.map((k) => { const h = team.habits[k], pc = h.possible ? Math.round((h.done / h.possible) * 100) : 0; return `<div class="tb"><span>${hi(k)} ${HABIT_META[k][1]}</span><div class="tbbar"><i style="width:${pc}%"></i></div><b>${pc}%</b></div>`; }).join("")}</div></div>` : ""}
+    </section>`;
+  }
+
+  // BMI: private (only the person and the administrator). Adults use WHO categories; under 18s need a BMI for age chart.
+  function bmiCard(r) {
+    const p = r.profile;
+    if (!p.heightCm) return `<section class="card"><h2>📏 My BMI</h2><p class="note">Add your height in <b>My profile</b> below to see your body mass index (BMI) and how it changes.</p></section>`;
+    const sw = startWeight(r), cw = latestWeight(r), pts = [["Nov 2024", p.beforeWeight], ["Start", sw], ["Now", cw]].filter(([, w]) => w).map(([l, w]) => [l, bmi(r, w)]);
+    const now = bmi(r, cw); if (!now) return "";
+    const lo = 15, hi = 45, pos = (v) => Math.max(0, Math.min(100, ((v - lo) / (hi - lo)) * 100));
+    const zones = [[15, 18.5, "#5AA9E6"], [18.5, 25, "#4CC36B"], [25, 30, "#F2B134"], [30, 35, "#E98A3C"], [35, 45, "#E4572E"]];
+    return `<section class="card"><h2>📏 My BMI</h2>
+      <div class="row between"><div class="cbig" style="font-size:2rem">${fmt(now.value, 1)}</div><div style="text-align:right">${now.cat ? `<b>${now.cat}</b>` : `<b>Under 18</b><br><small>Read on a BMI for age chart</small>`}<br><small>Height ${fmt(p.heightCm)} cm</small></div></div>
+      ${now.minor ? "" : `<div class="bmiscale">${zones.map(([a, b, c]) => `<i style="left:${pos(a)}%;width:${pos(b) - pos(a)}%;background:${c}"></i>`).join("")}${pts.map(([l, b]) => `<span class="bmimark ${l === "Now" ? "now" : ""}" style="left:${pos(b.value)}%" title="${l}: ${fmt(b.value, 1)}"></span>`).join("")}</div>
+        <div class="bmilabels"><small>18.5</small><small>25</small><small>30</small><small>35</small></div>`}
+      ${pts.length > 1 ? `<div class="bmisteps">${pts.map(([l, b]) => `<div><small>${l}</small><b>${fmt(b.value, 1)}</b></div>`).join("<span>→</span>")}</div>` : ""}
+      <p class="note">BMI is weight (kg) divided by height (m) squared. It is a screening number, not a diagnosis. ${now.minor ? "For under 18s, the clinic reads BMI on the WHO BMI for age chart." : "Adult categories from the World Health Organization."}</p></section>`;
+  }
+
+  // ---------- Catch up "loans" and the end of week list ----------
+  // A shortfall from earlier in the challenge week is a loan to cover today. It never changes past points (past days are locked).
+  const MOVE_CAP = 60, WATER_EXTRA_CAP = 4, KCAL_DAY_CAP = 300;
+  function loans(r) {
+    const t = todayStr(), w = currentWeek(); if (t < settings().start || t <= w.w0) return null;
+    const L = ledger(r, w.w0, addDays(t, -1)); if (!L.days) return null;
+    const wkg = latestWeight(r) || 70, walkMin = (kcal) => Math.round(kcal / ((4.3 * wkg) / 60));
+    const todayMin = activeMinutes(r, t), todaySteps = daySteps(r, t) >= stepGoal();
+    const moveTarget = Math.min(MOVE_CAP, MOVE_MINUTES + L.move.owed), moveDone = todaySteps ? Math.max(todayMin, MOVE_MINUTES) : todayMin;
+    const waterTarget2 = waterTarget() + Math.min(WATER_EXTRA_CAP, L.water.owed), g = glasses(r, t);
+    const kcal = L.kcalOver !== null && L.kcalOver > 0 ? L.kcalOver : 0;
+    return { L, moveTarget, moveDone, moveLeft: Math.max(0, moveTarget - moveDone), waterTarget: waterTarget2, water: g, kcal, kcalToday: Math.min(KCAL_DAY_CAP, kcal), walkMin: walkMin(Math.min(KCAL_DAY_CAP, kcal)), lastDay: t === w.w1 };
+  }
+  function loanCard() {
+    const r = rec(state.me), x = loans(r); if (!x) return "";
+    const { L } = x, owesMove = L.move.owed > 0, owesWater = L.water.owed > 0, owesKcal = x.kcal > 0, missedFood = L.missedFood.length;
+    if (!owesMove && !owesWater && !owesKcal && !missedFood) return `<section class="card loan clear"><h2>🏦 Catch up</h2><p class="note" style="margin:0">Nothing owed from earlier this week. Well done, you are fully on track. 🎉</p></section>`;
+    const row = (icon, title, sub, done, target) => `<div class="loanrow"><span class="scicon">${icon}</span><div class="grow"><b>${title}</b><small>${sub}</small>${target ? `<div class="bar"><i style="width:${Math.min(100, (done / target) * 100)}%"></i></div>` : ""}</div></div>`;
+    return `<section class="card loan"><h2>🏦 Catch up: what I owe this week</h2>
+      <p class="note" style="margin-top:0">What you did not complete on earlier days this week becomes a loan to cover now.</p>
+      ${owesMove ? row("👟", `Move ${x.moveTarget} minutes today`, `${MOVE_MINUTES} for today + ${Math.min(L.move.owed, MOVE_CAP - MOVE_MINUTES)} owed${L.move.owed > MOVE_CAP - MOVE_MINUTES ? ` (${L.move.owed} owed in total; ${x.lastDay ? "the week closes tonight" : "spread the rest over the week"})` : ""} · done ${x.moveDone} min${x.moveLeft ? ` · ${x.moveLeft} to go` : " ✓ covered"}`, x.moveDone, x.moveTarget) : ""}
+      ${owesWater ? row(glassSvg(true, "sm"), `Drink ${x.waterTarget} glasses today`, `${waterTarget()} for today + ${Math.min(L.water.owed, WATER_EXTRA_CAP)} owed · ${x.water} so far`, x.water, x.waterTarget) : ""}
+      ${owesKcal ? row("🍽️", `${fmt(x.kcal)} kcal over budget this week`, `Today, cover up to ${x.kcalToday} kcal: about ${x.walkMin} minutes of brisk walking, or eat that much less. Never go below your safe minimum, and never skip a meal.`, 0, 0) : ""}
+      ${missedFood ? row("📝", `Food not logged on ${missedFood} day${missedFood > 1 ? "s" : ""}`, `${L.missedFood.map((d) => fmtDate(d, { weekday: "short" })).join(", ")}. Those days cannot be filled in any more; log every meal today.`, 0, 0) : ""}
+      <p class="note">Catch up does not change past points (past days are locked). It helps you keep your promise to your body.</p></section>`;
+  }
+  // End of week list: everything not completed in the week, from eating to exercising.
+  function weekSummaryCard(w, title) {
+    const r = rec(state.me), t = todayStr(), L = ledger(r, w.w0, w.w1 < t ? w.w1 : t); if (!L.days) return "";
+    const sl = [];
+    const item = (ok, icon, label, detail) => `<div class="wsrow ${ok ? "ok" : ""}"><span>${ok ? "✓" : icon}</span><div class="grow"><b>${label}</b><small>${detail}</small></div></div>`;
+    const tasksDone = (() => { let n = 0; for (let d = w.w0; d <= w.w1 && d <= t; d = addDays(d, 1)) if (taskDone(r, d)) n++; return n; })();
+    sl.push(item(!L.move.owed, "👟", "Movement", L.move.owed ? `${L.move.owed} minutes still to do (did ${L.move.done} of ${L.move.need})` : `${L.move.done} active minutes, target met`));
+    sl.push(item(!L.water.owed, glassSvg(true, "sm"), "Water", L.water.owed ? `${L.water.owed} glasses short (drank ${L.water.done} of ${L.water.need})` : "Target met"));
+    sl.push(item(L.foodDays === L.days, "🍽️", "Food logged", L.foodDays === L.days ? `Every day (${L.days} of ${L.days})` : `${L.foodDays} of ${L.days} days · missing ${L.missedFood.map((d) => fmtDate(d, { weekday: "short" })).join(", ")}`));
+    if (L.kcalOver !== null && L.foodDays) sl.push(item(L.kcalOver <= 0, "⚖️", "Calories", L.kcalOver > 0 ? `${fmt(L.kcalOver)} kcal over your budget on logged days` : `${fmt(-L.kcalOver)} kcal under budget on logged days. Good`));
+    sl.push(item(L.sleepDays === L.days, "🌙", "Sleep goal", `${L.sleepDays} of ${L.days} nights`));
+    sl.push(item(L.journalDays === L.days, "📓", "Journal", `${L.journalDays} of ${L.days} days`));
+    sl.push(item(tasksDone >= L.days, "🎯", "Daily challenges", `${tasksDone} of ${L.days} done`));
+    const left = sl.filter((x) => !x.includes('wsrow ok')).length;
+    return `<section class="card"><div class="row between"><h2>${title}</h2><span class="pill ${left ? "warn" : "good"}">${left ? left + " to finish" : "All done ✓"}</span></div>
+      <p class="note" style="margin-top:0">Week ${w.n} · ${fmtDate(w.w0, { day: "numeric", month: "short" })} to ${fmtDate(w.w1, { day: "numeric", month: "short" })}</p>
+      <div class="wslist">${sl.join("")}</div></section>`;
+  }
+  function weekEndCard() {
+    const t = todayStr(), w = currentWeek(); if (t < settings().start) return "";
+    if (t === w.w1) return weekSummaryCard(w, "📋 Week ends today: still to do");
+    const prev = challengeWeeks().find((x) => x.n === w.n - 1);
+    if (prev && t === w.w0) return weekSummaryCard(prev, "📋 Last week: left undone");
+    return "";
+  }
+
   function challengeDone(r, c, d = todayStr()) {
     const ds = r.challenges.filter((x) => x.challengeId === c.id).map((x) => x.date);
     if (c.type === "daily") return ds.includes(d);
@@ -513,6 +633,7 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
       ${soon.map((c) => `<div class="item" style="opacity:.7"><div class="grow"><div class="t">${esc(c.title)}</div><div class="s">Starts ${shortDate(c.start)} · ${esc(c.type)} · ${c.points} pts</div></div><span class="pill">Upcoming</span></div>`).join("")}</div></section>`;
   }
 
+  const nowHM = () => new Date().toLocaleTimeString("en-GB", { timeZone: "Africa/Johannesburg", hour: "2-digit", minute: "2-digit", hour12: false });
   const saHour = () => Number(new Date().toLocaleString("en-ZA", { timeZone: "Africa/Johannesburg", hour: "numeric", hour12: false })) % 24;
   /** Personal coaching: honest, habit based nudges. Never about pushing the scale. */
   function coachTips() {
@@ -565,9 +686,12 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
   function viewToday() {
     return `${installCard()}
       ${bigCheckin()}
+      ${activitiesCard()}
+      ${weekEndCard()}
+      ${loanCard()}
+      ${habitsCard()}
       ${homeScreen()}
       ${announcementsCard()}
-      ${activitiesCard()}
       ${coachCard()}
       ${stoicCard()}`;
   }
@@ -606,9 +730,8 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
   function foodList(r) {
     const items = r.foods.filter((f) => f.date === state.date);
     if (!items.length) return `<div class="empty">Nothing logged for ${shortDate(state.date)} yet.</div>`;
-    const order = ["Breakfast", "Lunch", "Dinner", "Snack"];
-    items.sort((a, b) => order.indexOf(a.meal) - order.indexOf(b.meal));
-    return `<div class="list">${items.map((f) => `<div class="item"><div class="grow"><div class="t">${esc(f.name)}</div><div class="s">${esc(f.meal)}${f.custom ? " · your estimate" : ""}</div></div><div class="k">${fmt(f.kcal)} kcal</div><button class="del" data-del="foods" data-id="${esc(f.id)}" aria-label="Delete">✕</button></div>`).join("")}</div>`;
+    items.sort((a, b) => (a.time || "99").localeCompare(b.time || "99"));
+    return `<div class="list">${items.map((f) => `<div class="item"><div class="grow"><div class="t">${esc(f.name)}</div><div class="s">${f.time ? `🕒 ${esc(f.time)} · ` : ""}${esc(f.meal)}${f.custom ? " · your estimate" : ""}</div></div><div class="k">${fmt(f.kcal)} kcal</div><button class="del" data-del="foods" data-id="${esc(f.id)}" aria-label="Delete">✕</button></div>`).join("")}</div>`;
   }
   function exList(r) {
     const items = r.exercises.filter((x) => x.date === state.date);
@@ -684,26 +807,72 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
     const budget = e.target + t.burned + (treat ? TREAT.kcal : 0);
     return `<div class="calrow"><div class="calring">${ring(t.eaten, budget)}</div><div class="note">🔒 Private · target <b>${fmt(e.target)}</b> kcal${t.burned ? ` + ${fmt(t.burned)} burned` : ""}${treat ? ` + ${TREAT.kcal} treat` : ""}</div></div>`;
   }
+  // Personal eating plan: one tap logs a whole line (protein plus its vegetables) with the right calories.
+  const myPlan = () => PLANS[state.me] || PLANS[(nameOf(state.me) || "").split(" ")[0].toLowerCase()] || null;
+  function planCard(r) {
+    const plan = myPlan(); if (!plan) return "";
+    const d = state.date, todays = r.foods.filter((f) => f.date === d);
+    const mealDone = (n) => todays.find((f) => f.meal === "Meal " + n);
+    const ea = eating(r, d), prov = ea.provitas, fruit = ea.fruit;
+    const kc = (items) => items.reduce((a, [id, n]) => a + (FOOD_BY_ID[id].unit ? Math.round((FOOD_BY_ID[id].kcal * n) / 100) : FOOD_BY_ID[id].kcal * n), 0);
+    return `<section class="card plancard"><h2>🍽️ My eating plan</h2><p class="note" style="margin-top:0">Tap what you ate. One choice from each meal. Weigh raw.</p>
+      <label class="plantime">🕒 Time eaten<input type="time" id="ptime" value="${nowHM()}" max="${nowHM()}"></label>
+      ${[1, 2, 3].map((n) => { const done = mealDone(n); return `<div class="planmeal"><div class="row between"><b>Meal ${n}</b>${done ? `<span class="pill good">✓ Done</span>` : ""}</div>
+        ${done ? `<p class="note" style="margin:4px 0 0">${esc(done.planLabel || done.name)}</p>` : `<div class="planopts">${plan[n].map(([label, items], i) => `<button class="planbtn" data-plan="${n}:${i}"><span>${esc(label)}</span><small>${kc(items)} kcal</small></button>`).join("")}</div>`}</div>`; }).join("")}
+      <div class="planmeal"><b>Daily allowance</b>
+        <div class="planopts two">
+          <button class="planbtn" data-allow="provita" ${prov >= plan.provita ? "disabled" : ""}><span>🍘 1 Provita</span><small>${prov} of ${plan.provita} today</small></button>
+          <button class="planbtn" data-allow="p_fruit" ${fruit >= plan.fruit ? "disabled" : ""}><span>🍊 1 Fruit</span><small>${fruit} of ${plan.fruit} today</small></button>
+        </div></div>
+    </section>`;
+  }
+  const notAllowedNote = (f) => NOT_ALLOWED[f.id] ? `<div class="flagbox" style="margin:0 0 10px">⛔ <b>Not on the eating plan</b><br><small>${esc(NOT_ALLOWED[f.id])}. You can still log it honestly; it will be flagged.</small></div>` : "";
+  // The clinic's eating plan rules, shown to everyone.
+  function rulesCard() {
+    return `<section class="card"><details class="fold"><summary>📜 Eating plan rules (for everyone)</summary>
+      <ol class="rules">
+        <li>Three meals a day. Never skip a meal. Choose one option from Meal 1, Meal 2 and Meal 3, and keep the whole line together.</li>
+        <li>At least 5 hours between meals. Last meal before 9 PM. Enter the <b>time eaten</b> with each meal so the app can check this.</li>
+        <li>Weigh proteins and vegetables <b>raw</b>, exactly. Every gram counts.</li>
+        <li>Proteins are not mixed: one protein per meal.</li>
+        <li>Cheese at most once a day. Feta at most once a week.</li>
+        <li>Fruit: 2 a day. Provitas: 5 or 6 a day (1 Ryvita or rice cake = 2 Provitas). Never more than 2 at a time.</li>
+        <li>No oil, margarine, butter or fat. Spray and Cook or olive oil spray only.</li>
+        <li>Herbs, spices, black pepper, curry and mustard powder, vinegar and garlic are fine. No spice mixes (Aromat, barbecue, chicken or meat spice). 1 teaspoon light soy sauce and 1 level teaspoon lite mayonnaise a day. Limited salt.</li>
+        <li>Vegetables: onion at most 30 g a day; tomato at most 70 g a day, no cherry tomatoes; broccoli at most a third of a meal's vegetables.</li>
+        <li>Coffee and tea with <b>no milk</b>; after 8 cups of coffee switch to decaf. Herbal tea is fine; no flavoured or fruit tea.</li>
+        <li>Up to 1 litre of diet fizzy drinks a day (Tab, soda water, Sprite Zero); Schweppes Lemon Lite at most 1 can. No Diet Coke or Cola Lite. No alcohol.</li>
+        <li>At least 2 litres of water a day. 5 sugar free gum sticks a day (no fruit flavours). Sweeteners without sucrose are fine.</li>
+      </ol>
+      <p class="note"><b>Not allowed:</b> any milk product (except plain fat free yoghurt and the plan cheeses), pork, lamb or mutton, shrimp, processed, smoked or pre cooked meat, meat stock, honey, sugar, ginger, red cayenne pepper, gelatine, yeast, energy drinks, flavoured diet Soda Stream, smoked mozzarella, goat's milk feta, and medicines or tonics with caffeine, fruit flavour or sugar (also amino acids, Barley Green, brewer's yeast, Cellasene, creatine, Fibrogel, Illumana, kelp, Moducure, S Mints, spirulina, vanilla essence, Velamints, Zoute drops).</p>
+      <p class="note">The app flags these automatically when they are logged. Flags guide; they cost no points.</p>
+    </details></section>`;
+  }
+  const FOOD_GROUPS = ["Eating plan", "Protein", "Vegetables", "Fruit", "Starches", "Dairy", "Drinks", "Snacks", "Takeaways", "Extras", "Supplements", "Medicines"];
+  function flagBanner(r) {
+    const f = eating(r, state.date).flags; if (!f.length) return "";
+    return `<div class="flagbox">${f.map((x) => `<div>🚩 <b>${esc(x.label)}</b><br><small>${esc(x.how)}</small></div>`).join("")}</div>`;
+  }
   function viewFood() {
     const r = rec(state.me);
     return `${logSeg()}
+      ${planCard(r)}
+      ${rulesCard()}
       <section class="card">
         <div class="row between wrap"><h2>Log food</h2>${dateNav()}</div>
         ${caloriesCard(r)}
+        ${flagBanner(r)}
         <form class="form" id="foodForm" autocomplete="off">
-          <label>Meal<select id="meal">${["Breakfast", "Lunch", "Dinner", "Snack"].map((m) => `<option ${m === guessMeal() ? "selected" : ""}>${m}</option>`).join("")}</select></label>
+          <div class="grid2"><label>Meal<select id="meal">${["Breakfast", "Lunch", "Dinner", "Snack"].map((m) => `<option ${m === guessMeal() ? "selected" : ""}>${m}</option>`).join("")}</select></label>
+          <label>Time eaten<input type="time" id="ftime" value="${nowHM()}" max="${nowHM()}" required></label></div>
           <label>What did you eat?<input id="fsearch" placeholder="Type a food, e.g. pap, chicken, apple" maxlength="80"></label>
           <div id="fresults" class="fresults"></div>
+          <label>Or choose from the list<select id="fpicklist"><option value="">Choose a food…</option>${FOOD_GROUPS.map((g) => { const list = FOODS.filter((f) => f.cat === g).sort((a, b) => a.name.localeCompare(b.name)); return list.length ? `<optgroup label="${g}">${list.map((f) => `<option value="${f.id}">${NOT_ALLOWED[f.id] ? "⛔ " : ""}${esc(f.name.replace(/ \(plan[^)]*\)/, ""))} · ${f.unit ? f.kcal + " kcal per 100 " + f.unit : f.serving + ", " + f.kcal + " kcal"}</option>`).join("")}</optgroup>` : ""; }).join("")}</select></label>
           <div id="fpicked" class="fpicked hidden"></div>
           <div id="fcustom" class="hidden"><div class="grid2"><label>Food name<input id="fname" maxlength="80"></label><label>Calories<input id="fkcal" type="number" inputmode="numeric" min="0" max="5000"></label></div>
             <p class="note">Custom foods are marked as your own estimate. Check the label for the calories.</p></div>
           <button class="btn full" id="fadd" disabled>Add to ${shortDate(state.date)}</button>
         </form>
-        <details class="fold" open><summary>🥗 My eating plan foods</summary>
-          <div class="chips" style="margin-top:8px">${["egg", "yoghurtff", "p_chicken", "p_beef", "p_hake", "p_tuna", "p_cottage", "p_feta", "p_veg", "cucumber", "lettuce", "provita2", "futurelife", "apple", "oranges", "naartjies", "spritezero", "centrum"].map((id) => `<button type="button" class="chip" data-foodid="${id}">${esc(FOOD_BY_ID[id].name.replace(/ \(plan[^)]*\)/, ""))}</button>`).join("")}</div>
-          <p class="note">Plan proteins and vegetables are weighed raw. Type the grams, or tap a quick amount.</p></details>
-        <details class="fold"><summary>⚡ Common foods</summary>
-          <div class="chips" style="margin-top:8px">${["pap", "brownbread", "egg", "chickenbreast", "rice", "chakalaka", "morogo", "apple", "banana", "amasi", "teasugar", "coke"].map((id) => `<button type="button" class="chip" data-foodid="${id}">${esc(FOOD_BY_ID[id].name)}</button>`).join("")}</div></details>
         ${foodList(r)}
       </section>`;
   }
@@ -717,8 +886,12 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
         <div class="row between wrap"><h2>👟 Steps and distance</h2>${dateNav()}</div>
         <div class="movetotals"><div><b>${fmt(st)}</b><small>steps</small></div><div><b>${fmt(km, 1)}</b><small>km</small></div><div><b>${fmt(r.exercises.filter((x) => x.date === state.date).reduce((a, x) => a + x.minutes, 0))}</b><small>active min</small></div></div>
         <div class="bar" style="margin:8px 0 4px"><i style="width:${Math.min(100, (st / goal) * 100)}%"></i></div>
-        <p class="note" style="margin-top:0">${st >= goal ? `Step goal reached! +${POINTS.steps} pts 🎉` : `${fmt(goal - st)} steps to your goal of ${fmt(goal)} (+${POINTS.steps} pts).`}</p>
-        <form class="form" id="stepsForm"><label>Steps today from your phone or watch (Health / Google Fit)<div class="row"><input id="stepsIn" type="number" inputmode="numeric" min="0" max="100000" placeholder="e.g. 6420" value="${phone ? phone.steps : ""}"><button class="btn">Save</button></div></label></form>
+        <p class="note" style="margin-top:0">${st >= goal ? `Step goal reached: your Move points (+${POINTS.exercise}) are earned 🎉` : `${fmt(goal - st)} steps to your goal of ${fmt(goal)}. Reaching it, or ${MOVE_MINUTES} active minutes, earns Move (+${POINTS.exercise}).`}</p>
+        <form class="form" id="stepsForm"><label>Steps today from your phone or watch (Health / Google Fit)<div class="row"><input id="stepsIn" type="text" inputmode="numeric" data-int autocomplete="off" placeholder="e.g. 6420" value="${phone ? phone.steps : ""}"><button class="btn">Save</button></div></label></form>
+      </section>
+      <section class="card">
+        <h2>⚡ Quick log</h2><p class="note" style="margin-top:0">One tap. Calories and steps are worked out for you.</p>
+        <div class="quickmove">${QUICK_MOVES.map((q, i) => `<button class="planbtn" data-quick="${i}"><span>${q[0]}</span></button>`).join("")}</div>
       </section>
       <section class="card">
         <div class="row between wrap"><h2>Log an activity</h2></div>
@@ -732,8 +905,8 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
           <div class="grid2">
             <label>Minutes<input id="mins" type="number" inputmode="numeric" min="1" max="600" value="30" required></label>
             <label>Calories burned<input id="exkcal" type="number" inputmode="numeric" min="0" max="5000" required></label>
-            <label id="kmWrap">Distance (km)<input id="exkm" type="number" inputmode="decimal" min="0" max="300" step="0.1"></label>
-            <label id="stWrap">Steps<input id="exsteps" type="number" inputmode="numeric" min="0" max="100000"></label>
+            <label id="kmWrap">Distance (km)<input id="exkm" type="text" inputmode="decimal" autocomplete="off" min="0" max="300" step="0.1"></label>
+            <label id="stWrap">Steps<input id="exsteps" type="text" inputmode="numeric" data-int autocomplete="off"></label>
           </div>
           <p class="note" id="exNote">Calories, distance and steps are estimated${w ? ` for your weight of ${fmt(w, 1)} kg` : ""}; change them if your phone or watch shows exact numbers.</p>
           <button class="btn full">Add to ${shortDate(state.date)}</button>
@@ -818,17 +991,18 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
 
       <details class="card fold"><summary>ℹ️ How scoring works</summary>
         <table>
-          <tr><td>Check in (log anything)</td><td><b>+${POINTS.checkin}</b> per day</td></tr>
-          <tr><td>Movement activity logged</td><td><b>+${POINTS.exercise}</b> per day</td></tr>
-          <tr><td>Daily healthy habit task</td><td><b>+${POINTS.task}</b></td></tr>
-          <tr><td>Journal entry</td><td><b>+${POINTS.reflect}</b></td></tr>
+          <tr><td>Check in (tap the button or log anything)</td><td><b>+${POINTS.checkin}</b> per day</td></tr>
+          <tr><td>Eat and log 3 meals</td><td><b>+${POINTS.food}</b> per day</td></tr>
+          <tr><td>Skipped meals or too little food (starving)</td><td><b style="color:var(--danger)">${POINTS.eatPenalty}</b></td></tr>
+          <tr><td>Move: ${MOVE_MINUTES} active minutes or the step goal</td><td><b>+${POINTS.exercise}</b> per day</td></tr>
           <tr><td>Water goal reached</td><td><b>+${POINTS.water}</b></td></tr>
           <tr><td>Sleep goal reached</td><td><b>+${POINTS.sleep}</b></td></tr>
+          <tr><td>Journal</td><td><b>+${POINTS.reflect}</b></td></tr>
+          <tr><td>Daily challenge</td><td><b>+${POINTS.task}</b></td></tr>
           <tr><td>Official weigh in (every other Saturday)</td><td><b>+${POINTS.weighin}</b></td></tr>
           <tr><td>Missed day (nothing logged)</td><td><b style="color:var(--danger)">${POINTS.missed}</b></td></tr>
-          <tr><td>Check in on a public holiday</td><td><b>+${POINTS.holiday}</b> bonus (no penalty if you rest)</td></tr>
+          <tr><td>Public holiday</td><td>no penalty if you rest</td></tr>
           <tr><td>Hard working week (treat token)</td><td><b>+${TREAT.bonus}</b> and a ${TREAT.kcal} kcal treat</td></tr>
-          <tr><td>Steps goal reached</td><td><b>+${POINTS.steps}</b></td></tr>
           <tr><td>Weight lost at official weigh ins (safe pace)</td><td><b>+${POINTS.perPercent}</b> per 1% of starting weight</td></tr>
           <tr><td>Admin challenges</td><td>points shown on each challenge</td></tr>
         </table>
@@ -868,17 +1042,20 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
       <h2>⚖️ Weigh in records <span class="pill warn">🔒 Confidential</span></h2>
       <p class="note">Official weigh ins happen every other Saturday.${nxt ? ` Next one: <b>${fmtDate(nxt, { weekday: "long", day: "numeric", month: "long" })}</b>.` : ""} Viewing this page is recorded in the audit log.</p>
       <div style="overflow-x:auto"><table class="records">
-        <tr><th>Name</th><th>23 Nov 2024</th>${cols.map((d, i) => `<th>${i === 0 ? "Start<br><small>14 Nov 2026</small>" : shortDate(d)}</th>`).join("")}<th>Lost in<br>challenge</th><th>Lost since<br>2024</th><th>Goal</th></tr>
+        <tr><th>Name</th><th>23 Nov 2024</th>${cols.map((d, i) => `<th>${i === 0 ? "Start<br><small>14 Nov 2026</small>" : shortDate(d)}</th>`).join("")}<th>Lost in<br>challenge</th><th>Lost since<br>2024</th><th>Goal</th><th>BMI<br><small>now</small></th></tr>
         ${MEMBERS.map((m) => { const r = rec(m.id), sc = score(m.id), bw = r.profile.beforeWeight, cur = latestWeight(r);
-          return `<tr><td><b>${esc(nameOf(m.id))}</b></td><td class="muted">${bw ? fmt(bw, 1) : "–"}</td>${cols.map((d, i) => cell(r, d, i)).join("")}<td><b>${sc.sw ? fmt(sc.lostKg, 1) + " kg" : "–"}</b></td><td><b style="color:var(--leaf)">${bw && cur ? fmt(bw - cur, 1) + " kg" : "–"}</b></td><td>${r.profile.goalWeight ? fmt(r.profile.goalWeight, 1) : "–"}</td></tr>`; }).join("")}
+          return `<tr><td><b>${esc(nameOf(m.id))}</b></td><td class="muted">${bw ? fmt(bw, 1) : "–"}</td>${cols.map((d, i) => cell(r, d, i)).join("")}<td><b>${sc.sw ? fmt(sc.lostKg, 1) + " kg" : "–"}</b></td><td><b style="color:var(--leaf)">${bw && cur ? fmt(bw - cur, 1) + " kg" : "–"}</b></td><td>${r.profile.goalWeight ? fmt(r.profile.goalWeight, 1) : "–"}</td><td>${(() => { const b = bmi(r, cur); return b ? `<b>${fmt(b.value, 1)}</b><br><small class="muted">${b.cat || "under 18"}</small>` : `<small class="muted">add height</small>`; })()}</td></tr>`; }).join("")}
       </table></div>
+      <details class="fold" style="margin-top:10px"><summary>📏 Heights for BMI</summary>
+        <form class="form" id="heightForm"><div class="grid2">${MEMBERS.map((m) => `<label>${esc(nameOf(m.id))} (cm)<input type="text" inputmode="numeric" data-int data-hcm="${m.id}" value="${rec(m.id).profile.heightCm || ""}" placeholder="e.g. 165"></label>`).join("")}</div>
+          <button class="btn full">Save heights</button><p class="note">Participants can also enter their own height in My profile.</p></form></details>
       <h3 style="margin-top:14px">✍🏾 Record the crew's weights</h3>
       <form class="form" id="groupForm">
         <label>Weigh in<select id="gDate">
           <option value="start">Starting weights (14 Nov 2026)</option>
           ${weighDays().map((d) => `<option value="${d}" ${d === lastWeighDay(today) ? "selected" : ""} ${d > today ? "disabled" : ""}>${fmtDate(d, { weekday: "short", day: "numeric", month: "short" })}${d > today ? " (upcoming)" : ""}</option>`).join("")}
         </select></label>
-        <div class="grid2">${MEMBERS.map((m) => `<label>${esc(nameOf(m.id))} (kg)<input type="number" inputmode="decimal" step="0.1" min="20" max="400" data-gw="${m.id}"></label>`).join("")}</div>
+        <div class="grid2">${MEMBERS.map((m) => `<label>${esc(nameOf(m.id))} (kg)<input type="text" inputmode="decimal" autocomplete="off" step="0.1" min="20" max="400" data-gw="${m.id}"></label>`).join("")}</div>
         <button class="btn full">Save weights</button>
         <p class="note" style="margin:0">Leave a box empty to skip someone. Saving again for the same date replaces the earlier weight.</p>
       </form>
@@ -890,7 +1067,7 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
     const list = Object.entries(HOLIDAYS).filter(([d]) => d >= s.start && d <= s.end);
     if (!list.length) return "";
     return `<details class="card fold"><summary>🇿🇦 Public holidays (no penalties)</summary>
-      <p class="note">No points are deducted on these days. Rest, celebrate with family, and check in if you can for a +${POINTS.holiday} bonus. Tip: fill half your plate with salad and vegetables before the festive food.</p>
+      <p class="note">No points are deducted on these days. Rest and celebrate with family; check in if you can to keep your streak. Tip: fill half your plate with salad and vegetables before the festive food.</p>
       <div class="list">${list.map(([d, n]) => `<div class="item" style="${d < today ? "opacity:.55" : ""}"><div class="grow"><div class="t">${esc(n)}</div><div class="s">${fmtDate(d, { weekday: "long", day: "numeric", month: "long" })}</div></div>${d === today ? `<span class="pill good">Today</span>` : ""}</div>`).join("")}</div></details>`;
   }
 
@@ -910,7 +1087,7 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
       <section class="card">
         <form class="form" id="calcForm">
           <div class="grid2">
-            <label>Kilograms to lose<input id="cKg" type="number" inputmode="decimal" min="0.5" max="100" step="0.5" value="${kg}"></label>
+            <label>Kilograms to lose<input id="cKg" type="text" inputmode="decimal" autocomplete="off" min="0.5" max="100" step="0.5" value="${kg}"></label>
             <label>Daily deficit (kcal)<select id="cDef">${[250, 500, 750, 1000].map((d) => `<option ${d === def ? "selected" : ""} value="${d}">${d}${d === 500 ? " (recommended)" : ""}</option>`).join("")}</select></label>
           </div>
         </form>
@@ -1061,6 +1238,8 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
         ${sc.goal !== null ? `<div style="margin-top:12px"><small>${fmt(sc.goal)}% of the way to ${fmt(p.goalWeight, 1)} kg</small><div class="bar"><i style="width:${sc.goal}%"></i></div></div>` : ""}
       </section>
 
+      ${bmiCard(r)}
+
       ${chartsCard()}
 
       ${trophyCabinet(state.me)}
@@ -1069,7 +1248,7 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
         <h2>⚖️ Weigh in</h2>
         <form class="form" id="wForm"><div class="grid2">
           <label>Date<input type="text" value="Today, ${fmtDate(todayStr(), { day: "numeric", month: "short" })}" readonly></label>
-          <label>Weight (kg)<input type="number" id="wKg" inputmode="decimal" step="0.1" min="20" max="400" value="${todayW ? todayW.kg : ""}" required></label></div>
+          <label>Weight (kg)<input type="text" id="wKg" inputmode="decimal" autocomplete="off" step="0.1" min="20" max="400" value="${todayW ? todayW.kg : ""}" required></label></div>
           <button class="btn full">${todayW ? "Update today's weight" : "Save personal weigh in"}</button></form>
         <p class="note">Personal weigh ins are for your own chart. Official weights are recorded by the administrator at the Saturday weigh ins, and only those count towards the winners.</p>
         <div style="margin-top:14px">${weightChart(r)}</div>
@@ -1082,8 +1261,8 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
             <label>Sex<select id="pSex"><option value="f" ${p.sex !== "m" ? "selected" : ""}>Female</option><option value="m" ${p.sex === "m" ? "selected" : ""}>Male</option></select></label>
             <label>Age<input id="pAge" type="number" inputmode="numeric" min="5" max="110" value="${p.age ?? ""}"></label>
             <label>Height (cm)<input id="pH" type="number" inputmode="numeric" min="90" max="230" value="${p.heightCm ?? ""}"></label>
-            <label>Starting weight (kg)<input id="pSW" type="number" inputmode="decimal" step="0.1" value="${p.startWeight ?? (sc.sw ?? "")}" ${p.startWeight ? 'readonly title="Only the administrator can change a starting weight"' : ""}></label>
-            <label>Goal weight (kg)<input id="pGW" type="number" inputmode="decimal" step="0.1" value="${p.goalWeight ?? ""}"></label>
+            <label>Starting weight (kg)<input id="pSW" type="text" inputmode="decimal" autocomplete="off" step="0.1" value="${p.startWeight ?? (sc.sw ?? "")}" ${p.startWeight ? 'readonly title="Only the administrator can change a starting weight"' : ""}></label>
+            <label>Goal weight (kg)<input id="pGW" type="text" inputmode="decimal" autocomplete="off" step="0.1" value="${p.goalWeight ?? ""}"></label>
           </div>
           <label>Activity level<select id="pAct">${[[1.2, "Mostly sitting"], [1.375, "Lightly active (1 to 3 days)"], [1.55, "Moderately active (3 to 5 days)"], [1.725, "Very active (6 to 7 days)"]].map(([v, l]) => `<option value="${v}" ${Number(p.activity || 1.375) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
           ${rateField(r)}
@@ -1107,7 +1286,7 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
     bl_medal_gold: "img/award-biggest-loser-medal-gold.webp", bl_trophy: "img/award-biggest-loser-trophy.webp", bl_plaque: "img/award-biggest-loser-plaque.webp",
   };
 
-  const taskDone = (r, d) => (r.tasks || []).some((t) => t.date === d);
+  const taskDone = (r, d) => (r.tasks || []).some((t) => t.date === d) || scorecard(r, d).taskDone;
 
   // Overlay helpers: coordinates are in image pixels (screens are 1024 × 1536).
   const W = 1024, H = 1536;
@@ -1277,6 +1456,7 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
   // ---------- Pages ----------
   function viewChallenge() {
     return `${weeklyScreen()}
+      ${weekSummaryCard(currentWeek(), "📒 This week so far")}
       <section class="card">${prizeStrip()}<p class="note center" style="margin:8px 0 0">Revealed together at the Grand Finale · ${esc(finaleLabel())}</p></section>
       ${upcomingCard()}
       ${treatCard(score(state.me).treats)}`;
@@ -1455,12 +1635,12 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
         <button class="btn full">Create challenge</button></form></section>
       <section class="card"><h2>Challenges</h2>
         <div class="list">${state.challenges.map((c) => `<div class="item"><div class="grow"><div class="t">${esc(c.title)} <span class="pill">${esc(c.type)}</span></div><div class="s">${shortDate(c.start)} to ${shortDate(c.end)} · ${c.points} pts${c.description ? " · " + esc(c.description) : ""}</div></div><button class="del" data-rm-ch="${c.id}" aria-label="Remove">✕</button></div>`).join("") || `<div class="empty">No custom challenges yet.</div>`}</div>
-        <p class="note">Built in every week: the 7 daily habit tasks (+${POINTS.task} each), movement, reflection and the treat token week.</p></section>`;
+        <p class="note">Built in every week: the daily scorecard (up to 18 or 20 points a day), the 7 daily challenges and the treat token week.</p></section>`;
   }
 
   function admScoring() {
     const c = state.admin.config, P = c.points;
-    const labels = { checkin: "Daily check in", exercise: "Movement logged", weighin: "Official weigh in", task: "Daily habit task", reflect: "Journal entry", water: "Water goal reached", sleep: "Sleep goal reached", missed: "Missed day (negative)", holiday: "Public holiday bonus", perPercent: "Per 1% of weight lost", treatBonus: "Treat token week bonus" };
+    const labels = { checkin: "Check in", food: "Eat and log 3 meals", eatPenalty: "Skipped meals / starving (negative)", exercise: "Move (20 min or step goal)", water: "Water goal", sleep: "Sleep goal", reflect: "Journal", task: "Daily challenge", weighin: "Official weigh in", missed: "Missed day (negative)", perPercent: "Per 1% of weight lost", treatBonus: "Treat token week bonus" };
     return `<section class="card"><h2>🏆 Scoring rules</h2><p class="note">Points are always calculated by the server from these rules. Changes apply to everyone immediately and are recorded in the audit log.</p>
       <form class="form" id="scoreForm"><div class="grid2">${Object.keys(labels).map((k) => `<label>${labels[k]}<input type="number" data-pt="${k}" value="${P[k]}" step="1"></label>`).join("")}
         <label>Daily water goal (glasses)<input type="number" id="wTarget" min="1" max="20" value="${(c.water || {}).target || 8}"></label>
@@ -1573,6 +1753,12 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
       await adminSend(body, "✓ Done.");
     }));
     const on = (id, fn) => { const f = $("#" + id, v); if (f) f.addEventListener("submit", (e) => { e.preventDefault(); fn(); }); };
+    on("heightForm", async () => {
+      const list = $$("[data-hcm]", v).map((i) => [i.dataset.hcm, Number(i.value)]).filter(([id, h]) => h >= 90 && h <= 230 && h !== rec(id).profile.heightCm);
+      if (!list.length) return toast("No new heights to save (use 90 to 230 cm).");
+      for (const [memberId, heightCm] of list) if (!(await adminSend({ action: "profile", memberId, profile: { heightCm } }))) return;
+      toast(`📏 ${list.length} height${list.length > 1 ? "s" : ""} saved. BMI is now shown.`);
+    });
     on("chForm", () => adminSend({ action: "challenge", title: $("#chTitle").value, description: $("#chDesc").value, type: $("#chType").value, points: $("#chPts").value, start: $("#chStart").value, end: $("#chEnd").value }, "🎯 Challenge created."));
     $$("[data-rm-ch]", v).forEach((b) => b.addEventListener("click", () => confirm("Remove this challenge?") && adminSend({ action: "challenge", remove: b.dataset.rmCh })));
     on("scoreForm", () => { const points = {}; $$("[data-pt]", v).forEach((i) => (points[i.dataset.pt] = Number(i.value))); adminSend({ action: "config", config: { ...A.config, points, treat: { minutes: Number($("#trMin").value), kcal: Number($("#trKcal").value) }, water: { target: Number($("#wTarget").value) }, sleep: { target: Number($("#sTarget").value) } } }, "🏆 Scoring rules saved."); });
@@ -1637,6 +1823,28 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
       if (choice && choice.outcome === "accepted") toast("📲 Installed. Find the Stoic by Choice icon on your home screen.");
       render();
     });
+    $$("[data-plan]", v).forEach((b) => b.addEventListener("click", async () => {
+      const [n, i] = b.dataset.plan.split(":").map(Number), [label, items] = myPlan()[n][i];
+      b.disabled = true;
+      const time = ($("#ptime") && $("#ptime").value) || nowHM();
+      if (time > nowHM()) { b.disabled = false; return toast("The time eaten cannot be later than now."); }
+      const entries = items.map(([id, amt]) => FOOD_BY_ID[id].unit ? { id: uid(), date: todayStr(), meal: "Meal " + n, foodId: id, amount: amt, time } : { id: uid(), date: todayStr(), meal: "Meal " + n, foodId: id, qty: amt, time });
+      const r0 = rec(state.me), before = dayPoints(r0, todayStr()), was = dayStatus(r0, todayStr()).any;
+      if (await send({ action: "addMany", type: "foods", entries, planLabel: label })) {
+        const gained = dayPoints(rec(state.me), todayStr()) - before; render();
+        toast(`🍽️ Meal ${n}: ${esc(label)} logged.${gained > 0 ? ` <b>+${gained} pts</b>` : ""}${was ? "" : " Checked in for the day ✓"}`);
+      } else b.disabled = false;
+    }));
+    $$("[data-quick]", v).forEach((b) => b.addEventListener("click", () => {
+      const q = QUICK_MOVES[Number(b.dataset.quick)], e = quickEntry(q); b.disabled = true;
+      addEntry("exercises", { id: uid(), date: todayStr(), ...e }, `💪🏾 ${esc(e.activity)} logged (${fmt(e.kcal)} kcal).`, true);
+    }));
+    $$("[data-allow]", v).forEach((b) => b.addEventListener("click", () => {
+      const id = b.dataset.allow, tm = ($("#ptime") && $("#ptime").value) || nowHM();
+      if (tm > nowHM()) return toast("The time eaten cannot be later than now.");
+      b.disabled = true;
+      addEntry("foods", { id: uid(), date: todayStr(), meal: "Snack", foodId: id, qty: 1, time: ($("#ptime") && $("#ptime").value) || nowHM() }, `${id === "provita" ? "🍘 Provita" : "🍊 Fruit"} logged.`);
+    }));
     $("[data-installhide]", v)?.addEventListener("click", () => { try { localStorage.setItem("sbc_install_hide", "1"); } catch {} render(); });
     $$("[data-hs]", v).forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); onHotspot(b); }));
     $$("[data-log]", v).forEach((b) => b.addEventListener("click", () => { state.logMode = b.dataset.log; state.jMood = undefined; state.jChecks = null; render(); }));
@@ -1712,8 +1920,8 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
         box.classList.remove("hidden");
         if (picked.unit) {
           const chips = picked.unit === "ml" ? [200, 250, 300, 330, 500] : GRAM_CHIPS;
-          box.innerHTML = `<div class="row between"><div><b>${esc(picked.name)}</b><br><small>${picked.kcal} kcal ${esc(picked.serving)}${/raw/.test(picked.serving) ? " · weigh it raw" : ""}</small></div><button type="button" class="del" data-clear aria-label="Clear">✕</button></div>
-            <div class="row between" style="margin-top:8px;gap:10px"><label style="flex:1">How much (${picked.unit})<input type="number" id="famt" inputmode="numeric" min="1" max="2000" value="${amount}"></label>
+          box.innerHTML = `${notAllowedNote(picked)}<div class="row between"><div><b>${esc(picked.name)}</b><br><small>${picked.kcal} kcal ${esc(picked.serving)}${/raw/.test(picked.serving) ? " · weigh it raw" : ""}</small></div><button type="button" class="del" data-clear aria-label="Clear">✕</button></div>
+            <div class="row between" style="margin-top:8px;gap:10px"><label style="flex:1">How much (${picked.unit})<input type="text" id="famt" inputmode="numeric" data-int autocomplete="off" value="${amount}"></label>
             <div class="kcalbig" id="fkc">${foodKcal(picked, amount)} <small>kcal</small></div></div>
             <div class="chips" style="margin-top:6px">${chips.map((g) => `<button type="button" class="chip ${g === amount ? "on" : ""}" data-amt="${g}">${g} ${picked.unit}</button>`).join("")}</div>`;
           $("#famt", box).addEventListener("input", (e) => { amount = Math.max(0, Math.round(Number(e.target.value) || 0)); $("#fkc").innerHTML = `${foodKcal(picked, amount)} <small>kcal</small>`; });
@@ -1722,7 +1930,7 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
           $("#fadd").disabled = false;
           return;
         }
-        box.innerHTML = `<div class="row between"><div><b>${esc(picked.name)}</b><br><small>${esc(picked.serving)} · ${picked.kcal} kcal each</small></div><button type="button" class="del" data-clear aria-label="Clear">✕</button></div>
+        box.innerHTML = `${notAllowedNote(picked)}<div class="row between"><div><b>${esc(picked.name)}</b><br><small>${esc(picked.serving)} · ${picked.kcal} kcal each</small></div><button type="button" class="del" data-clear aria-label="Clear">✕</button></div>
           <div class="row between" style="margin-top:8px"><div class="seg">${SERVINGS.map((q) => `<button type="button" class="${q === qty ? "on" : ""}" data-qty="${q}">${q === 0.5 ? "½" : q === 1.5 ? "1½" : q}</button>`).join("")}</div>
           <div class="kcalbig">${Math.round(picked.kcal * qty)} <small>kcal</small></div></div>`;
         $$("[data-qty]", box).forEach((b) => b.addEventListener("click", () => { qty = Number(b.dataset.qty); showPicked(); }));
@@ -1739,9 +1947,11 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
         $$("[data-customfood]", v).forEach((b) => b.addEventListener("click", () => { custom = true; $("#fresults").innerHTML = ""; $("#fcustom").classList.remove("hidden"); $("#fname").value = q.trim(); $("#fkcal").focus(); $("#fadd").disabled = false; }));
       });
       $$("[data-foodid]", v).forEach((b) => b.addEventListener("click", () => { pick(FOOD_BY_ID[b.dataset.foodid]); ff.scrollIntoView({ behavior: "smooth" }); }));
+      $("#fpicklist", v)?.addEventListener("change", (e) => { const f = FOOD_BY_ID[e.target.value]; if (f) { $("#fsearch").value = ""; $("#fresults").innerHTML = ""; pick(f); } });
       ff.addEventListener("submit", async (e) => {
         e.preventDefault();
-        const base = { id: uid(), date: state.date, meal: $("#meal").value };
+        const tm = $("#ftime").value || nowHM(); if (tm > nowHM()) return toast("The time eaten cannot be later than now.");
+        const base = { id: uid(), date: state.date, meal: $("#meal").value, time: tm };
         if (picked && picked.unit) { if (!amount) return toast("Please enter how much."); return addEntry("foods", { ...base, foodId: picked.id, amount, kcal: foodKcal(picked, amount), name: picked.name }, `🍽️ ${esc(picked.name.replace(/ \(plan[^)]*\)/, ""))} (${amount} ${picked.unit}): ${foodKcal(picked, amount)} kcal logged.`); }
         if (picked) return addEntry("foods", { ...base, foodId: picked.id, qty, kcal: Math.round(picked.kcal * qty), name: picked.name }, `🍽️ ${esc(picked.name)}: ${Math.round(picked.kcal * qty)} kcal logged.`);
         if (custom) { if (!$("#fname").value.trim() || $("#fkcal").value === "") return toast("Please enter the food and its calories."); return addEntry("foods", { ...base, name: $("#fname").value.trim(), kcal: Number($("#fkcal").value) }, `🍽️ ${esc($("#fname").value.trim())} logged.`); }
@@ -1786,6 +1996,16 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
           $("#exkm").value = act[2] ? km : ""; $("#exsteps").value = act[3] ? Math.round(km * act[3]) : "";
         }
       };
+      // Typing a distance (decimals allowed, e.g. 2.5 or 2,5) updates the minutes, calories and steps to match.
+      $("#exkm").addEventListener("input", () => {
+        const a = $("#act").value; if (a === "custom") return;
+        const act = ACTIVITIES[a], km = Number($("#exkm").value); if (!(km > 0) || act[5] === "floors") return;
+        const w = latestWeight(rec(state.me)) || 70;
+        if (typeof act[5] === "number") { $("#exkcal").value = Math.round(act[1] * w * km); $("#mins").value = Math.max(1, Math.round(act[2] * km)); }
+        else if (act[2]) { const mins = Math.max(1, Math.round((km / act[2]) * 60)); $("#mins").value = mins; $("#exkcal").value = Math.round(act[1] * w * mins / 60); }
+        else return;
+        $("#exsteps").value = act[3] ? Math.round(km * act[3]) : "";
+      });
       $("#act").addEventListener("change", upd); $("#mins").addEventListener("input", upd); $("#floors").addEventListener("input", upd); $("#rounds").addEventListener("input", upd); upd();
       exForm.addEventListener("submit", async (e) => {
         e.preventDefault();
@@ -1799,10 +2019,10 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
 
     $("#stepsForm", v)?.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const n = Number($("#stepsIn").value); if (!(n >= 0)) return toast("Please enter your steps.");
+      const raw = $("#stepsIn").value.replace(/\D/g, ""), n = Number(raw); if (!raw || !(n > 0)) return toast("Please type your steps, for example 6420."); if (n > 100000) return toast("That is more than 100 000 steps. Please check the number.");
       const before = daySteps(rec(state.me), state.date);
       if (await send({ action: "add", type: "steps", entry: { id: uid(), date: state.date, steps: Math.round(n) } })) {
-        render(); if (n >= stepGoal() && before < stepGoal()) { confetti(); toast(`👟 Step goal reached! +${POINTS.steps} pts`); } else toast(`👟 ${fmt(n)} steps saved.`);
+        render(); if (n >= stepGoal() && before < stepGoal()) { confetti(); toast(`👟 Step goal reached! Move points earned.`); } else toast(`👟 ${fmt(n)} steps saved.`);
       }
     });
 
@@ -1875,6 +2095,14 @@ import { makeEngine, finaleTime, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAIL
 
   // Keep everyone in sync
   setInterval(() => { if (state.session && !state.busy && !document.hidden && state.tab !== "admin") load(); }, POLL_MS);
+  // South African phones type decimals with a comma (2,5) and may add spaces in big numbers (6 420). Accept both everywhere.
+  document.addEventListener("input", (e) => {
+    const t = e.target;
+    if (!(t instanceof HTMLInputElement)) return;
+    if (t.inputMode === "decimal" && /[, ]/.test(t.value)) t.value = t.value.replace(/,/g, ".").replace(/\s/g, "");
+    else if (t.hasAttribute("data-int") && /\D/.test(t.value)) t.value = t.value.replace(/\D/g, "");
+  }, true);
+
   // Installable app: register the service worker and catch the install prompt (Android / desktop Chrome).
   if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
   window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); state.installEvt = e; if (state.tab === "today") render(); });

@@ -27,6 +27,20 @@ A secure, shared challenge app for the crew: registration with email verificatio
 * iPhone (Safari): Share ⬆️ → Add to Home Screen → Add. Android (Chrome): ⋮ menu → Install app (or tap "Save the app to my phone" on the Home tab).
 * Updates arrive automatically when you upload new files to GitHub; nothing needs reinstalling. Personal data is never stored on the phone by the app's offline helper.
 
+## Simple logging, habits and BMI
+* **One tap eating plan** (Log, Food): Judith's and Benadette's printed plans are built in. Tap the line you ate (for example "120 g chicken + 125 g veg") and the protein, vegetables and calories are logged together. Each meal can be chosen once a day, as the plan requires. Provitas and fruit have their own buttons with the daily allowance.
+* **Quick log** (Log, Move): one tap for walk 30 min, run 5 km, stairs to floor 15, spinning, gym weights and dancing.
+* **Decimals and big numbers:** 2,5 or 2.5 km both work, and steps can be typed as 6420 or 6 420.
+* **Habits forming** (Home): a 7 day habit grid, runs of days in a row (habits take about 66 days to become automatic; Lally et al., 2010), daily points, and the team's habit rates for the last 7 days (effort only, no weights).
+* **BMI** (Progress, private): weight ÷ height². Shows November 2024, start and now on the WHO adult scale. Under 18s are not given an adult category; their BMI is read on the WHO BMI for age chart. Add heights in My profile or in Admin, Weigh ins, "Heights for BMI".
+* Messages with a Stoic quote now stay for 15 seconds; tap to close.
+* **Catch up (loans):** anything not done earlier in the challenge week becomes a loan shown on Home: extra Move minutes today (up to 60 in a day), extra glasses (up to 4 extra), calories over budget (cover up to 300 kcal a day by walking or eating a little less, never below the safe minimum and never by skipping meals; not shown for under 18s), and days without food logged. Loans never change past points.
+* **End of week list:** on the last day of each challenge week (and the first day of the next), Home lists what was not completed, from eating to exercising. The Challenge tab always shows "This week so far".
+* **Eating plan rules for everyone:** the clinic's RULES and NOT ALLOWED sheets are on the Food page ("Eating plan rules") and are checked automatically. Flags appear for: foods not on the plan (milk products, sugar and honey, oil, butter and fried food, pork, lamb, processed or smoked meat, meat stock, alcohol, energy drinks, Diet Coke, medicines with sugar or caffeine); cheese more than once a day; feta more than once a week; proteins mixed in one meal; fruit or Provitas more than 2 at a time; onion over 30 g or tomato over 70 g a day; more than 1 teaspoon of lite mayonnaise or soy sauce; more than 8 coffees; more than 1 litre of diet fizzy drinks or 1 can of Schweppes Lemon Lite; more than 5 sticks of gum. Not allowed foods show ⛔ in the list and a warning before they are added. From 18:00 the food line reminds: last meal before 9 PM.
+* **Time eaten:** every food entry and plan meal has a "Time eaten" (it starts at the current time and cannot be later than now). The app flags a meal eaten after 9 PM and meals less than 5 hours apart (for example "Meal 1 at 07:00, Meal 2 at 10:30: 3 h 30 min"). Fruit and Provitas may be eaten any time, as the rules allow. Food logged before this update has no time and is not checked.
+* **Bad habit flags:** more than 2 fruits a day (or more than the plan's 5 Provitas) shows a red flag on Home and on the Food page. Flags cost no points.
+* **Food list:** search by typing, or choose from one drop down list grouped by type (eating plan, protein, vegetables, fruit, starches, dairy, drinks, snacks, takeaways, extras, supplements, medicines). Medicines include Panado, Benylin, Tensodol, Disprin, Myprodol and Grand Pa; syrups contain some sugar, and the eating plan bans medicines or tonics with sugar, caffeine or fruit flavour, so check with the clinic.
+
 ## 3. Security and privacy
 * **Today only:** everything is logged for today (South African time). The date cannot be changed, missed days cannot be back dated, and past entries cannot be edited or removed. This is enforced by the server. Only the administrator can record official weigh ins for a weigh in Saturday.
 * PINs are stored only as salted scrypt hashes. Easy PINs (1234, 0000…) are refused.
@@ -51,21 +65,30 @@ A secure, shared challenge app for the crew: registration with email verificatio
 | Settings | Challenge dates, PIN policy, automatic approval, rules and privacy text |
 | Audit log | Full history of sensitive actions |
 
-## 5. Scoring (defaults, editable by the administrator)
-| Action | Points |
+## 5. Scoring (version 2, from 19 November 2026)
+Every day has one scorecard on the Home tab ("Today's points"). Each line counts **once a day**, so logging more of the same thing never adds extra points. The maximum is 20 points on Tuesday, Friday and Saturday, and 18 on the other days (see the daily challenge).
+
+| Daily scorecard | Points |
 |---|---|
-| Check in (log anything that day) | +5 |
-| Movement activity | +3 |
-| Daily healthy habit task | +2 |
-| Journal entry (private, with mood) | +2 |
-| Water goal reached (8 glasses, adjustable) | +2 |
-| Sleep goal reached (7 hours for adults, 8 for under 18s, adjustable) | +2 |
-| Official weigh in (every other Saturday) | +10 |
-| Missed day (from the day you joined; never on public holidays) | −10 |
-| Public holiday check in | +3 |
-| Treat token week (all days checked in + 150 exercise minutes) | +15 and a 300 kcal treat day |
-| Weight lost, up to the safe weekly pace | +100 per 1% of starting weight |
+| Check in (tap the big button or log anything) | +4 |
+| Eat and log 3 meals (breakfast, lunch, dinner or Meal 1, 2, 3; drinks and medicines do not count as a meal) | +3 |
+| Move: 20 active minutes or the step goal (7 500) | +5 |
+| Water goal (8 glasses) | +3 |
+| Sleep goal (7 hours; 8 for under 18s) | +2 |
+| Journal (picture checklist) | +1 |
+| Daily challenge on Tuesday, Friday and Saturday | +2 |
+| Daily challenge on Monday (move 30 min), Wednesday (water), Thursday (sleep), Sunday (reflect) | ticks itself with that habit, no extra points |
+
+| Other | Points |
+|---|---|
+| Official weigh in (every other Saturday, recorded by the administrator) | +10 |
+| Missed day (nothing logged; never before you joined or on public holidays) | −10 |
+| Skipped meals or starving (fewer than 3 meals, or under 800 kcal for adults / 1 200 kcal for under 18s; people on a clinic plan only need their 3 plan meals), from 19 Nov 2026 | −5 the next day |
+| Treat token week (every day checked in + 150 active minutes) | +15 and a treat day |
+| Weight lost at official weigh ins, up to the safe pace | +100 per 1% of starting weight |
 | Admin challenges | as set per challenge |
+
+What changed from version 1: steps and activities are one "Move" line (they were counted twice before); the Monday, Wednesday, Thursday and Sunday challenges, which repeat Move, Water, Sleep and Journal, now tick themselves without extra points; the public holiday bonus was removed (holidays still carry no penalty); food points need 3 meals; skipping meals or starving costs 5 points. Steps from the phone and from activities are never added together: the larger number counts. Old point settings saved by the administrator are ignored once and replaced by these values; all logged data is kept and points are recalculated from it.
 
 Under 18s follow the Junior plan (about 0.5 kg a month for ages 6 to 11; at most 0.5 kg a week for teens).
 
@@ -105,8 +128,14 @@ Weekly Challenge Award (each Tuesday to Monday week), Monthly Challenge Award (e
 | Judith | 94.0 | 77.6 | 60 |
 | Patrick | 79.8 | 64.4 | 50 |
 | Thabo | 116.3 | 99.3 | 85 |
+| Peter (Kisembo) | 129.0 | not recorded | 85 |
+
+Peter's 2024 weight and goal are added automatically to his record when he joins (or the next time the app loads if he has already joined). His starting weight is recorded at his first official weigh in.
 
 ## Sources
+* National Institute for Health and Care Excellence (NICE). Obesity: identification, assessment and management. Very low calorie diets (800 kcal a day or less) are not for routine use and need clinical supervision.
+* Lally, P., van Jaarsveld, C.H.M., Potts, H.W.W. and Wardle, J. (2010). How are habits formed: modelling habit formation in the real world. European Journal of Social Psychology, 40(6), 998–1009.
+* World Health Organization. Body mass index (BMI) classification for adults; WHO growth reference (BMI for age), 5 to 19 years.
 * Mifflin MD et al. (1990). American Journal of Clinical Nutrition, 51(2), 241–247 (resting energy equation).
 * Hall KD (2008). International Journal of Obesity, 32(3), 573–576 (energy deficit per kg).
 * Barlow SE (2007). Pediatrics, 120(Suppl 4), S164–S192; Hampl SE et al. (2023). Pediatrics, 151(2) (safe paediatric weight loss).
