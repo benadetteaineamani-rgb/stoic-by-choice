@@ -351,15 +351,15 @@ export function makeEngine(ctx) {
     const ws = challengeWeeks(), t = today();
     return ws.find((w) => w.w0 <= t && t <= w.w1) || (t < ws[0].w0 ? ws[0] : ws[ws.length - 1]);
   }
+  // Challenge months: 4 full challenge weeks each (Tuesday to Monday, 28 days), so every month is the same length
+  // and closes on a Monday, five days before an official Saturday weigh in. The last one is the final stretch to the Grand Finale.
   function challengeMonths() {
-    const s = S(), out = [];
-    let d = s.start;
+    const s = S(), out = [], short = (d) => new Date(d + "T12:00:00").toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    let d = s.start, n = 1;
     while (d <= s.end) {
-      const dt = new Date(d + "T12:00:00");
-      const next = dt.getMonth() === 11 ? `${dt.getFullYear() + 1}-01-01` : `${dt.getFullYear()}-${pad(dt.getMonth() + 2)}-01`;
-      const to = addDays(next, -1) < s.end ? addDays(next, -1) : s.end;
-      out.push({ key: d.slice(0, 7), from: d, to, label: dt.toLocaleDateString("en-ZA", { month: "long", year: "numeric" }) });
-      d = next;
+      const end = addDays(d, 27), to = end < s.end ? end : s.end, last = to === s.end;
+      out.push({ key: "M" + n, n, from: d, to, label: `Month ${n}${last && diffDays(d, to) < 27 ? " (final stretch)" : ""} · ${short(d)} to ${short(to)}` });
+      d = addDays(to, 1); n++;
     }
     return out;
   }
@@ -511,7 +511,7 @@ export function makeEngine(ctx) {
     // Weekly and monthly awards are presented at the first official weigh in after the period closes,
     // and only once the administrator has entered the weights for that weigh in. Until then nobody is named.
     const recorded = new Set(weighDays().filter((d) => d <= t && ids.some((id) => R(id).weights.some((x) => x.verified && x.date === d))));
-    const presentOn = (end) => weighDays().find((d) => d > end) || null;
+    const presentOn = (end) => weighDays().find((d) => d > end) || (end >= s.end ? weighDays().find((d) => d >= end) || null : null);
     const result = (period, end, getPts) => { const on = presentOn(end), closed = end < t, done = closed && !!on && recorded.has(on); const w = winners(getPts); return { ...period, closed, presentOn: on, done, top: done ? w.top : null, winners: done ? w.winners : [] }; };
     const weeksRes = cws.map((w) => result(w, w.w1, (id) => summaries[id].weekPts[w.n]));
     const monthsRes = ms.map((m) => result(m, m.to, (id) => summaries[id].monthPts[m.key]));

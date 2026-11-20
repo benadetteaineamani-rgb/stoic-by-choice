@@ -22,7 +22,23 @@ A secure, shared challenge app for the crew: registration with email verificatio
 5. **Eating plan rules:** folded at the bottom.
 
 ## Awards timing
-Weekly and Monthly Challenge Awards are presented on an official weigh in day: at the first weigh in Saturday after the week (Tuesday to Monday) or calendar month has closed, and only once the administrator has entered the weights for that weigh in (the server checks this). Until then nobody is named, not even in the data sent to phones; the award shows "presented at the weigh in on …". Weigh ins are every other Saturday, so two weekly awards are usually presented at each weigh in (for example weeks 1 and 2 and the November award on Saturday 5 December). The Board still shows the live standings.
+Weekly and Monthly Challenge Awards are presented on an official weigh in day: at the first weigh in Saturday after the week (Tuesday to Monday) or calendar month has closed, and only once the administrator has entered the weights for that weigh in (the server checks this). Until then nobody is named, not even in the data sent to phones; the award shows "presented at the weigh in on …". Weigh ins are every other Saturday, so two weekly awards are usually presented at each weigh in (for example weeks 1 and 2 on Saturday 5 December). The Board still shows the live standings.
+
+## Key dates page
+The challenge has 159 days, 23 challenge weeks and 6 challenge months; the header shows "Day x of 159 · Week x of 23 · Month x of 6", and the Key dates page opens with "The challenge in numbers" (days, weeks and months with completed and to go).
+Open it from the "📅 Key dates" button at the top of the Challenge tab or the Awards tab. It shows when the current week and month end (with days left and the reveal date), the next official weigh in, the Grand Finale, and a full list of every challenge month and week with its end date, reveal date and status (⏳ Counting, Counted · awaiting weigh in, ✓ Revealed).
+
+## Challenge months
+Monthly awards use challenge months of 4 full weeks (28 days, Tuesday to Monday), so every month is equal and closes on a Monday, five days before a weigh in:
+
+| Month | Dates | Presented at the weigh in |
+|---|---|---|
+| Month 1 | 17 Nov to 14 Dec | Sat 19 Dec |
+| Month 2 | 15 Dec to 11 Jan | Sat 16 Jan |
+| Month 3 | 12 Jan to 8 Feb | Sat 13 Feb |
+| Month 4 | 9 Feb to 8 Mar | Sat 13 Mar |
+| Month 5 | 9 Mar to 5 Apr | Sat 10 Apr |
+| Month 6 (final stretch) | 6 Apr to 24 Apr | Sat 24 Apr, Grand Finale |
 
 ## Food list and eating plans
 * About 225 foods, including the eating plan foods (raw chicken, turkey, ostrich, lean beef, veal, game, hake, kingklip, whiting, sole, tuna, calamari, prawns, crayfish, cottage cheese, ricotta, mozzarella, feta, plan vegetables and fruit), Provitas (27 kcal each), Futurelife, beef goulash (109 kcal per 100 g), Sprite Zero (about 3 kcal per 300 ml), Centrum (0 kcal), fat free yoghurt, brown bread, lettuce, cucumber, oranges and naartjies.

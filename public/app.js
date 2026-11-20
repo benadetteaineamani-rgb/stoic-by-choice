@@ -261,7 +261,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
       ${row("📉", "Weight lost at official weigh ins, up to a safe pace", `+${POINTS.perPercent} per 1%`)}
       <h3>🏆 How winners are decided</h3>
       <ul class="pglist">
-        <li><b>Weekly and Monthly awards:</b> most daily points in the week (Tuesday to Monday) or month. Presented at the next weigh in, after the weights are entered.</li>
+        <li><b>Weekly award:</b> most daily points in a challenge week (Tuesday to Monday). <b>Monthly award:</b> most daily points in a challenge month of 4 weeks (Month 1 is 17 Nov to 14 Dec). Both are presented at the next weigh in, after the weights are entered.</li>
         <li><b>Biggest Loser (R${fmt(prizes().bl)}):</b> highest percentage of starting weight lost, from official weigh ins only. Revealed at the Grand Finale.</li>
         <li><b>Greatest Effort (R${fmt(prizes().effort)}):</b> most daily habit points over the whole challenge. Weight does not count. Revealed at the Grand Finale.</li>
       </ul>
@@ -462,7 +462,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
     // Logging is always for today: refresh the day on every screen draw, so an app left open overnight never saves to yesterday.
     state.date = todayStr();
     const cd = challengeDay();
-    $("#dateline").textContent = `${fmtDate(todayStr())}${holiday(todayStr()) ? " 🇿🇦 " + holiday(todayStr()) : ""} · ` + (cd.phase === "on" ? `Day ${cd.day} of ${cd.total} · ${cd.left} days to go` : cd.phase === "before" ? `Challenge starts in ${cd.toStart} day${cd.toStart === 1 ? "" : "s"}` : "Challenge complete 🏁");
+    $("#dateline").textContent = `${fmtDate(todayStr())}${holiday(todayStr()) ? " 🇿🇦 " + holiday(todayStr()) : ""} · ` + (cd.phase === "on" ? `Day ${cd.day} of ${cd.total} · ${(() => { const t = todayStr(), w = challengeWeeks(), m = challengeMonths(), cw = w.find((x) => x.w0 <= t && t <= x.w1), cm = m.find((x) => x.from <= t && t <= x.to); return `Week ${cw ? cw.n : "–"} of ${w.length} · Month ${cm ? cm.n : "–"} of ${m.length}`; })()} · ${cd.left} days to go` : cd.phase === "before" ? `Challenge starts in ${cd.toStart} day${cd.toStart === 1 ? "" : "s"}` : "Challenge complete 🏁");
     const a = state.account, signedIn = !!(state.session && a);
     $("#whoBtn").innerHTML = signedIn ? `${avatarImg(a.avatar)}${esc(a.name.split(" ")[0])} ▾` : "🔒 Sign in";
     document.body.classList.toggle("authed", signedIn && !state.pending);
@@ -470,7 +470,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
     $$("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === state.tab));
     if (!signedIn) { $("#view").innerHTML = viewAuth(); bindAuth(); return; }
     if (state.pending || !state.me) { $("#view").innerHTML = viewPending(); bindAuth(); return; }
-    const views = { today: viewToday, challenge: viewChallenge, log: () => ({ move: viewMove, water: viewWater, sleep: viewSleep, journal: viewJournal }[state.logMode] || viewFood)(), food: viewFood, move: viewMove, board: viewBoard, awards: viewAwards, calc: viewCalc, me: viewMe, admin: viewAdmin };
+    const views = { today: viewToday, challenge: viewChallenge, log: () => ({ move: viewMove, water: viewWater, sleep: viewSleep, journal: viewJournal }[state.logMode] || viewFood)(), food: viewFood, move: viewMove, board: viewBoard, awards: viewAwards, calendar: viewCalendar, calc: viewCalc, me: viewMe, admin: viewAdmin };
     if (state.tab === "admin" && a.role !== "admin") state.tab = "today";
     $("#view").innerHTML = (views[state.tab] || viewToday)();
     bind();
@@ -966,7 +966,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
       </section>`;
   }
 
-  const ALL_MODES = { week: "This Week", month: "This Month", overall: "Overall" };
+  const ALL_MODES = { week: "This Week", month: "This Challenge Month", overall: "Overall" };
   const prizes = () => ({ ...DEFAULT_CONFIG.prizes, ...((state.config && state.config.prizes) || {}) });
   const rand = (n) => "R" + Math.round(n).toLocaleString("en-ZA").replace(/[,\u00a0]/g, " ");
   const prizeStrip = () => `<div class="prizes"><div class="prize big"><span>🏆</span><div><b>${rand(prizes().bl)}</b><small>Grand prize · Biggest Loser</small></div></div><div class="prize"><span>⭐</span><div><b>${rand(prizes().effort)}</b><small>Greatest effort · Most Consistent</small></div></div></div>`;
@@ -1487,8 +1487,47 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
   }
 
   // ---------- Pages ----------
+  // Key dates: when each challenge week and month ends, and when its winner is revealed.
+  function viewCalendar() {
+    const t = todayStr(), wr = weekResults(), mr = monthResults(), s = settings();
+    const cw = wr.find((w) => w.w0 <= t && t <= w.w1), cm = mr.find((m) => m.from <= t && t <= m.to), nw = nextWeighDay(t);
+    const left = (d) => { const n = diffDays(t, d); return n === 0 ? "ends today" : n === 1 ? "1 day left" : n + " days left"; };
+    const day = (d, o = { weekday: "short", day: "numeric", month: "short" }) => d ? new Date(d + "T12:00:00").toLocaleDateString("en-GB", o) : "–";
+    const status = (x, end) => x.done ? `<span class="pill good">✓ Revealed</span>` : end < t ? `<span class="pill warn">Counted · awaiting weigh in</span>` : x.w0 <= t || x.from <= t ? `<span class="pill">⏳ Counting</span>` : `<span class="muted">Upcoming</span>`;
+    const card = (icon, title, big, sub) => `<div class="kd"><span class="kdi">${icon}</span><div class="grow"><small>${title}</small><b>${big}</b><span>${sub}</span></div></div>`;
+    const nW = wr.length, nM = mr.length, wDone = wr.filter((w) => w.w1 < t).length, mDone = mr.filter((m) => m.to < t).length;
+    const total = diffDays(s.start, s.end) + 1, dayN = Math.min(total, Math.max(0, diffDays(s.start, t) + 1));
+    const meter = (icon, label, n, of, done) => `<div class="cnt"><span>${icon}</span><b>${n}<small> of ${of}</small></b><em>${label}</em><div class="bar"><i style="width:${(done / of) * 100}%"></i></div><small>${done} completed · ${of - done} to go</small></div>`;
+    return `<section class="card">
+        <h2>🔢 The challenge in numbers</h2>
+        <div class="cntgrid">
+          ${meter("📅", "days", dayN, total, Math.max(0, dayN - 1))}
+          ${meter("🗓️", "weeks", cw ? cw.n : wDone, nW, wDone)}
+          ${meter("📆", "months", cm ? cm.n : mDone, nM, mDone)}
+        </div>
+        <p class="note">${nW} challenge weeks (Tuesday to Monday; the last one is 5 days) and ${nM} challenge months (4 weeks each; Month ${nM} is the final stretch), ${total} days from ${day(s.start, { day: "numeric", month: "long", year: "numeric" })} to ${day(s.end, { day: "numeric", month: "long", year: "numeric" })}.</p>
+      </section>
+      <section class="card">
+        <h2>📅 Key dates</h2>
+        <div class="kdgrid">
+          ${cw ? card("🗓️", `Week ${cw.n} of ${nW} ends`, day(cw.w1, { weekday: "long", day: "numeric", month: "long" }), `${left(cw.w1)} · revealed ${day(cw.presentOn)}`) : ""}
+          ${cm ? card("📆", `Month ${cm.n} of ${nM} ends`, day(cm.to, { weekday: "long", day: "numeric", month: "long" }), `${left(cm.to)} · revealed ${day(cm.presentOn)}`) : ""}
+          ${nw ? card("⚖️", "Next official weigh in", day(nw, { weekday: "long", day: "numeric", month: "long" }), diffDays(t, nw) === 0 ? "today" : `in ${diffDays(t, nw)} day${diffDays(t, nw) === 1 ? "" : "s"}`) : ""}
+          ${card("🏆", "Grand Finale", day(s.end, { weekday: "long", day: "numeric", month: "long", year: "numeric" }), `results revealed at ${new Date(state.finale && state.finale.revealAt ? state.finale.revealAt : finaleTime(settings(), state.config)).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Johannesburg" })} · ${diffDays(t, s.end)} days to go`)}
+        </div>
+        <p class="note">Weeks run Tuesday to Monday (7 days). Months are 4 full weeks (28 days). Winners are revealed at the next Saturday weigh in, after the administrator enters the weights.</p>
+      </section>
+      <section class="card"><h2>📆 All ${nM} challenge months</h2>
+        <div class="kdtable">${mr.map((m) => `<div class="kdrow ${m.from <= t && t <= m.to ? "now" : ""}"><div class="grow"><b>Month ${m.n} of ${nM}${m.label.includes("final") ? " · final stretch" : ""}</b><span class="kdlen">${diffDays(m.from, m.to) + 1} days</span><small>${day(m.from)} → ends <b>${day(m.to)}</b> · reveal ${day(m.presentOn)}</small></div>${status(m, m.to)}</div>`).join("")}</div>
+      </section>
+      <section class="card"><h2>🗓️ All ${nW} challenge weeks</h2>
+        <div class="kdtable">${wr.map((w) => `<div class="kdrow ${w.w0 <= t && t <= w.w1 ? "now" : ""}"><div class="grow"><b>Week ${w.n} of ${nW}</b><span class="kdlen">${diffDays(w.w0, w.w1) + 1} days · Month ${(mr.find((m) => m.from <= w.w0 && w.w0 <= m.to) || {}).n || "–"}</span><small>${day(w.w0)} → ends <b>${day(w.w1)}</b> · reveal ${day(w.presentOn)}</small></div>${status(w, w.w1)}</div>`).join("")}</div>
+      </section>`;
+  }
+
   function viewChallenge() {
-    return `${weeklyScreen()}
+    return `<button class="btn ghost full keydates" data-go="calendar">📅 Key dates: week and month ending dates</button>
+      ${weeklyScreen()}
       ${weekSummaryCard(currentWeek(), "📒 This week so far")}
       <section class="card">${prizeStrip()}<p class="note center" style="margin:8px 0 0">Revealed together at the Grand Finale · ${esc(finaleLabel())}</p></section>
       ${upcomingCard()}
@@ -1507,7 +1546,8 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
     const awardImg = (src, alt) => `<img class="award-img" src="${src}" alt="${esc(alt)}" loading="lazy">`;
     const head = (src, title, line) => `<summary><img class="award-thumb" src="${src}" alt=""><div class="grow"><b>${title}</b><small>${line}</small></div><span class="chev">›</span></summary>`;
     const names = (ids) => (ids && ids.length ? ids.map((x) => esc(nameOf(x).split(" ")[0])).join(" & ") : "nobody yet");
-    return `${awardsScreen()}
+    return `<button class="btn ghost full keydates" data-go="calendar">📅 Key dates: when each week and month ends and is revealed</button>
+      ${awardsScreen()}
       <details class="card award" id="aw-weekly">${head(IMG.weekly_award, "Weekly Challenge Award", (() => { const last = wr.filter((w) => w.done).pop(); const pend = wr.find((w) => !w.done && w.presentOn && w.w0 <= today); const next = pend ? `Week ${pend.n}: presented at the weigh in on ${fmtDate(pend.presentOn, { weekday: "short", day: "numeric", month: "short" })}` : ""; return last ? `Week ${last.n}: ${names(last.winners)}${next ? " · " + next : ""}` : next || "–"; })())}
         ${awardImg(IMG.weekly_award, "Stoic by Choice Weekly Challenge Award")}
         <p class="note">For the most scorecard points in a challenge week (Tuesday to Monday). Presented at the next official Saturday weigh in, once the administrator has entered the weights. Nobody is named before then.</p>
@@ -1517,9 +1557,10 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
 
       <details class="card award" id="aw-monthly">${head(IMG.monthly_award, "Monthly Challenge Award", (() => { const last = mr.filter((m) => m.done).pop(); const pend = mr.find((m) => !m.done && m.presentOn && m.from <= today); const next = pend ? `${pend.label}: presented at the weigh in on ${fmtDate(pend.presentOn, { weekday: "short", day: "numeric", month: "short" })}` : ""; return last ? `${last.label}: ${names(last.winners)}${next ? " · " + next : ""}` : next || "–"; })())}
         ${awardImg(IMG.monthly_award, "Stoic by Choice Monthly Challenge Award")}
-        <p class="note">For the most scorecard points in a calendar month. Presented at the first official Saturday weigh in after the month ends, once the administrator has entered the weights. Nobody is named before then.</p>
+        <p class="note">For the most scorecard points in a challenge month: 4 full challenge weeks (28 days, Tuesday to Monday), so every month is equal. Each month closes on a Monday and is presented at the official weigh in that Saturday, once the administrator has entered the weights. Nobody is named before then.</p>
+        <div class="list">${challengeMonths().map((m) => { const x = mr.find((y) => y.key === m.key) || {}; return `<div class="item"><div class="grow"><div class="t">${esc(m.label)}</div><div class="s">Presented ${x.presentOn ? fmtDate(x.presentOn, { weekday: "short", day: "numeric", month: "short" }) : "–"}</div></div><div>${x.done ? winnerChips(x.winners) : m.from <= today ? "⏳" : ""}</div></div>`; }).join("")}</div>
         ${mr.filter((m) => !m.done && m.from <= today).map((m) => `<p class="note">⏳ ${esc(m.label)}: ${m.closed ? "closed" : "running"} · presented at the weigh in on <b>${m.presentOn ? fmtDate(m.presentOn, { weekday: "long", day: "numeric", month: "long" }) : "–"}</b></p>`).join("")}
-        <div class="list">${mr.filter((m) => m.done).reverse().map((m) => `<div class="item"><div class="grow"><div class="t">${esc(m.label)}</div></div><div>${winnerChips(m.winners)}</div></div>`).join("") || `<div class="empty">No monthly awards presented yet.</div>`}</div>
+
       </details>
 
       <details class="card award" id="aw-consistent">${head(IMG.consistent, "Most Consistent Participant · Greatest Effort", isSealed() ? `⭐ ${rand(prizes().effort)} · 🔒 sealed until the Grand Finale` : `⭐ ${rand(prizes().effort)} · Winner: ${names(cons)}`)}

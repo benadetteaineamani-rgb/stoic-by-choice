@@ -146,7 +146,7 @@ async function buildState(viewer, { adminView = false } = {}) {
   // The Grand Finale: final standings stay sealed for everyone (administrator included) until the reveal.
   const revealAt = finaleTime(settings, config);
   const revealed = !!config.finale.revealed || Date.now() >= Date.parse(revealAt);
-  const cwk = engine.currentWeek().n, cmonth = today.slice(0, 7);
+  const cwk = engine.currentWeek().n, cmonth = (engine.challengeMonths().find((m) => m.from <= today && today <= m.to) || engine.challengeMonths()[0] || {}).key;
   const shared = {};
   for (const [id, s] of Object.entries(summaries)) {
     const c = { ...s };
