@@ -14,6 +14,16 @@ A secure, shared challenge app for the crew: registration with email verificatio
 3. The administrator approves them in **Admin → Participants** and links them to their pre loaded record.
 4. Next time: tap your avatar and type your PIN.
 
+## Food page layout
+1. **Today's food:** calories against the target, Breakfast / Lunch / Dinner tiles (✓ with time and calories), snacks with fruit and Provita counts, and any flags.
+2. **My eating plan** (Benadette and Judith): one tap plan meals with the time eaten.
+3. **Add food:** pick the meal (big buttons), the time eaten, then the food from the drop down list (or type to search).
+4. **What I ate today:** grouped by meal with times and calorie subtotals.
+5. **Eating plan rules:** folded at the bottom.
+
+## Awards timing
+Weekly and Monthly Challenge Awards are presented on an official weigh in day: at the first weigh in Saturday after the week (Tuesday to Monday) or calendar month has closed, and only once the administrator has entered the weights for that weigh in (the server checks this). Until then nobody is named, not even in the data sent to phones; the award shows "presented at the weigh in on …". Weigh ins are every other Saturday, so two weekly awards are usually presented at each weigh in (for example weeks 1 and 2 and the November award on Saturday 5 December). The Board still shows the live standings.
+
 ## Food list and eating plans
 * About 225 foods, including the eating plan foods (raw chicken, turkey, ostrich, lean beef, veal, game, hake, kingklip, whiting, sole, tuna, calamari, prawns, crayfish, cottage cheese, ricotta, mozzarella, feta, plan vegetables and fruit), Provitas (27 kcal each), Futurelife, beef goulash (109 kcal per 100 g), Sprite Zero (about 3 kcal per 300 ml), Centrum (0 kcal), fat free yoghurt, brown bread, lettuce, cucumber, oranges and naartjies.
 * Weighed foods ask for grams or ml, with quick amounts that match the meal plans (for example 65 g, 105 g, 120 g).
@@ -66,6 +76,8 @@ A secure, shared challenge app for the crew: registration with email verificatio
 | Audit log | Full history of sensitive actions |
 
 ## 5. Scoring (version 2, from 19 November 2026)
+Everyone sees the same plain language points guide in three places: a one time "How points work" explainer the first time they open the app after this update (tap "Got it"), "How points work" under Today's points on Home, and "How points are awarded" (open by default) under the leaderboard on the Board.
+
 Every day has one scorecard on the Home tab ("Today's points"). Each line counts **once a day**, so logging more of the same thing never adds extra points. The maximum is 20 points on Tuesday, Friday and Saturday, and 18 on the other days (see the daily challenge).
 
 | Daily scorecard | Points |

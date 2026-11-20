@@ -508,8 +508,13 @@ export function makeEngine(ctx) {
       };
     }
     const winners = (getPts) => { const v = ids.map((id) => ({ id, pts: getPts(id) })); const top = Math.max(-Infinity, ...v.map((x) => x.pts)); return { top, winners: top > 0 ? v.filter((x) => x.pts === top).map((x) => x.id) : [] }; };
-    const weeksRes = cws.map((w) => ({ ...w, done: w.w1 < t, ...winners((id) => summaries[id].weekPts[w.n]) }));
-    const monthsRes = ms.map((m) => ({ ...m, done: m.to < t, ...winners((id) => summaries[id].monthPts[m.key]) }));
+    // Weekly and monthly awards are presented at the first official weigh in after the period closes,
+    // and only once the administrator has entered the weights for that weigh in. Until then nobody is named.
+    const recorded = new Set(weighDays().filter((d) => d <= t && ids.some((id) => R(id).weights.some((x) => x.verified && x.date === d))));
+    const presentOn = (end) => weighDays().find((d) => d > end) || null;
+    const result = (period, end, getPts) => { const on = presentOn(end), closed = end < t, done = closed && !!on && recorded.has(on); const w = winners(getPts); return { ...period, closed, presentOn: on, done, top: done ? w.top : null, winners: done ? w.winners : [] }; };
+    const weeksRes = cws.map((w) => result(w, w.w1, (id) => summaries[id].weekPts[w.n]));
+    const monthsRes = ms.map((m) => result(m, m.to, (id) => summaries[id].monthPts[m.key]));
     const leaders = (metric) => { const v = ids.map((id) => ({ id, v: metric(id) })); const top = Math.max(-Infinity, ...v.map((x) => x.v)); return top > 0 ? v.filter((x) => x.v === top).map((x) => x.id) : []; };
     // Greatest Effort: the most points from healthy habits (check ins, movement, steps, water, sleep, journal, tasks); weight not included.
     const consistent = leaders((id) => summaries[id].habit * 1000 + summaries[id].checkins);
