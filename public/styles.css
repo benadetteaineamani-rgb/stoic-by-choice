@@ -592,6 +592,9 @@ label.sub { font-size: .85rem; opacity: .85; }
 
 .glassml { font-size: .88rem; opacity: .9; margin: -4px 0 10px; }
 
+.navrow { display: flex; justify-content: space-between; gap: 10px; margin: 0 0 10px; }
+.navrow .backbtn { margin: 0; }
+.backbtn:disabled { opacity: .35; cursor: default; }
 .backbtn { display: inline-flex; align-items: center; gap: 4px; margin: 0 0 10px; padding: 8px 14px; border-radius: 99px; border: 1px solid var(--line); background: #17130C; color: var(--gold2); font: inherit; font-weight: 700; font-size: .95rem; cursor: pointer; }
 details.mealgroup { border: 1px solid var(--line); border-radius: 12px; padding: 0 10px; margin-top: 8px; background: #15110A; }
 details.mealgroup summary.mghead { list-style: none; cursor: pointer; border-bottom: 0; margin: 0; padding: 12px 2px; }

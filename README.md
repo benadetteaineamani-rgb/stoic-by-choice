@@ -47,13 +47,13 @@ The one tap plan meal buttons were removed from the Food page (they repeated the
 * Advice follows widely used public health guidance: WHO physical activity guidelines (150 to 300 minutes of moderate activity a week for adults; an average of 60 minutes a day for 5 to 17 year olds), NHS and CDC guidance on safe weight loss (about 0.5 to 1 kg a week, regular meals, water, keeping a food record), and sleep recommendations (7 to 9 hours for adults, 8 to 10 for teenagers).
 
 ## Food categories and frequent foods
-Adding food: 1. meal, 2. time eaten, 3. tap a category, 4. choose the food from that category's list (allowed foods first, ⛔ not allowed foods at the bottom). Categories: ⭐ My frequent foods, 🍽️ Plan meals, 🥩 Proteins, 🧀 Dairy, 🥬 Vegetables, 🍎 Fruit, 🍞 Carbohydrates, 🥤 Drinks, 🍬 Snacks, sweets and gum, 🧂 Condiments, spices and sweeteners, 🍔 Takeaways, 💊 Supplements and vitamins, 🩹 Medicines.
+Adding food: 1. meal, 2. time eaten, 3. tap a category, 4. choose the food from that category's list (allowed foods first, ⛔ not allowed foods at the bottom). For a food that is not listed, tap **➕ Other: type my own food**: typing shows any matching foods from the list first, or "Use … as my own food" with the calories. A food typed and logged twice is added automatically to **✏️ My own foods**. Categories: ⭐ My frequent foods, 🍽️ Plan meals, 🥩 Proteins, 🧀 Dairy, 🥬 Vegetables, 🍎 Fruit, 🍞 Carbohydrates, 🥤 Drinks, 🍬 Snacks, sweets and gum, 🧂 Condiments, spices and sweeteners, 🍔 Takeaways, 💊 Supplements and vitamins, 🩹 Medicines.
 **My frequent foods** is built automatically from each person's own entries: any food (with the same amount), plan meal or own custom food logged at least twice appears, most used first (up to 15), with how many times it was logged. Choosing one fills in the same amount.
 
-## Plan meals for everyone, meal dropdowns and Back
+## Plan meals for everyone, meal dropdowns and Back / Forward
 * The eating plan lines (for example "120 g chicken + 125 g veg") are at the top of everyone's food list, grouped Meal 1, Meal 2 and Meal 3 (both printed plans, repeats removed). Choosing one logs the protein and its vegetables together, with the calories, under the meal picked in step 1.
 * "What I ate today" is a set of dropdowns: Breakfast, Lunch, Dinner, and Snacks, drinks and medicines, each showing the number of items and calories; tap to open.
-* Every page except Home has a "‹ Back" button at the top (the phone's back gesture works too).
+* Every page has "‹ Back" and "Forward ›" buttons at the top, like a web browser: Back returns to the previous page, Forward goes again to the page you just came back from (greyed out when there is nowhere to go). The phone's back gesture works too.
 
 ## Food page layout
 1. **Today's food:** calories against the target, Breakfast / Lunch / Dinner tiles (✓ with time and calories), snacks with fruit and Provita counts, and any flags.

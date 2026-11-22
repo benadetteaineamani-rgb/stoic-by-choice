@@ -481,8 +481,10 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     if (state.pending || !state.me) { $("#view").innerHTML = viewPending(); bindAuth(); return; }
     const views = { today: viewToday, challenge: viewChallenge, log: () => ({ move: viewMove, water: viewWater, sleep: viewSleep, journal: viewJournal }[state.logMode] || viewFood)(), food: viewFood, move: viewMove, board: viewBoard, awards: viewAwards, calendar: viewCalendar, profile: viewProfile, recipes: viewRecipes, calc: viewCalc, me: viewMe, admin: viewAdmin };
     if (state.tab === "admin" && a.role !== "admin") state.tab = "today";
-    $("#view").innerHTML = (state.tab !== "today" ? `<button class="backbtn" data-back>‹ Back</button>` : "") + (views[state.tab] || viewToday)();
+    const canBack = state.tab !== "today" || navStack.length > 0, canFwd = fwdStack.length > 0;
+    $("#view").innerHTML = (canBack || canFwd ? `<div class="navrow"><button class="backbtn" data-back ${canBack ? "" : "disabled"}>‹ Back</button><button class="backbtn fwd" data-fwd ${canFwd ? "" : "disabled"}>Forward ›</button></div>` : "") + (views[state.tab] || viewToday)();
     $("[data-back]")?.addEventListener("click", () => { if (navStack.length) { try { history.back(); return; } catch {} } goBack(); });
+    $("[data-fwd]")?.addEventListener("click", goForward);
     bind();
     if (state.tab === "admin") bindAdmin();
     tickCountdown();
@@ -1048,17 +1050,26 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     }
     return [...tally.values()].filter((x) => x.n >= 2).sort((a, b) => b.n - a.n || b.last.localeCompare(a.last)).slice(0, 15);
   }
+  // Foods a person typed themselves (not in the list) and logged at least twice become their own list.
+  function ownFoods(r) {
+    const m = new Map();
+    for (const f of r.foods) if (f.custom && f.name) { const k = f.name.trim().toLowerCase(), x = m.get(k) || { name: f.name.trim(), kcal: f.kcal, n: 0, last: "" }; x.n++; if (f.date >= x.last) { x.last = f.date; x.kcal = f.kcal; } m.set(k, x); }
+    return [...m.values()].filter((x) => x.n >= 2).sort((a, b) => a.name.localeCompare(b.name));
+  }
   function foodCats(r) {
     const fav = frequentFoods(r), list = [];
     if (fav.length) list.push(["frequent", "⭐", "My frequent foods", fav.length]);
     list.push(["plan", "🍽️", "Plan meals", PLAN_MEALS.length]);
     for (const [k, icon, name] of CATEGORIES) list.push([k, icon, name, FOODS.filter((f) => f.group === k && !f.hidden).length]);
+    const own = ownFoods(r); if (own.length) list.push(["own", "✏️", "My own foods", own.length]);
+    list.push(["other", "➕", "Other: type my own food", ""]);
     if (!state.foodCat || !list.some((x) => x[0] === state.foodCat)) state.foodCat = fav.length ? "frequent" : "plan";
     return list;
   }
   function catOptions(r, k) {
     const opt = (v, t) => `<option value="${v}">${t}</option>`;
     if (k === "frequent") return opt("", "Choose one of your usual foods…") + frequentFoods(r).map((x, i) => opt("fav" + i, `${esc(x.label)} · ${fmt(x.kcal)} kcal · ${x.n}×`)).join("");
+    if (k === "own") return opt("", "Choose one of your own foods…") + ownFoods(r).map((x, i) => opt("own" + i, `${esc(x.name)} · ${fmt(x.kcal)} kcal · ${x.n}×`)).join("");
     if (k === "plan") return opt("", "Choose a plan meal…") + [1, 2, 3].map((n) => `<optgroup label="Meal ${n}">${PLAN_MEALS.filter((m) => m.n === n).map((m) => opt(m.id, `${esc(m.label)} · ${m.kcal} kcal`)).join("")}</optgroup>`).join("");
     return opt("", "Choose a food…") + FOODS.filter((f) => f.group === k && !f.hidden).sort((a, b) => (!!NOT_ALLOWED[a.id] - !!NOT_ALLOWED[b.id]) || a.name.localeCompare(b.name)).map((f) => opt(f.id, `${NOT_ALLOWED[f.id] ? "⛔ " : ""}${esc(f.name)} · ${f.unit ? f.kcal + " kcal per 100 " + f.unit : f.serving + ", " + f.kcal + " kcal"}`)).join("");
   }
@@ -1169,12 +1180,15 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
           <button type="button" class="btn ghost full scanbtn" data-scan>📷 Scan my food: the app suggests what it is</button>
           <label>3. Pick a category</label>
           <div class="catgrid">${foodCats(r).map(([k, icon, name, n]) => `<button type="button" class="catbtn ${k === state.foodCat ? "on" : ""}" data-fcat="${k}"><span>${icon}</span><b>${esc(name)}</b><small>${n}</small></button>`).join("")}</div>
-          <label>4. Choose the food<select id="fpicklist">${catOptions(r, state.foodCat)}</select></label>
-          <label class="sub">or type to search<input id="fsearch" placeholder="e.g. chicken, apple, Provita" maxlength="80"></label>
-          <div id="fresults" class="fresults"></div>
+          <label id="step4" class="${state.foodCat === "other" ? "hidden" : ""}">4. Choose the food<select id="fpicklist">${catOptions(r, state.foodCat)}</select></label>
+          <div id="otherPanel" class="${state.foodCat === "other" ? "" : "hidden"}">
+            <label>4. Type your food<input id="fsearch" placeholder="e.g. chicken stew, kimchi, mogodu" maxlength="80" autocomplete="off"></label>
+            <div id="fresults" class="fresults"></div>
+            <p class="note">Foods you type and log twice are added to <b>✏️ My own foods</b> automatically.</p>
+          </div>
           <div id="fpicked" class="fpicked hidden"></div>
           <div id="fcustom" class="hidden"><div class="grid2"><label>Food name<input id="fname" maxlength="80"></label><label>Calories<input id="fkcal" type="number" inputmode="numeric" min="0" max="5000"></label></div>
-            <p class="note">Custom foods are marked as your own estimate. Check the label for the calories.</p></div>
+            <p class="note">Calories: check the label, or use a similar food from the list as a guide. Your own foods are marked as your estimate.</p></div>
           <button class="btn full" id="fadd" disabled>Add to ${esc(meal)}</button>
         </form>
       </section>
@@ -2493,7 +2507,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
         const q = $("#fsearch").value; picked = null; showPicked();
         const res = searchFoods(q);
         $("#fresults").innerHTML = q.trim().length < 2 ? "" : res.map((f) => `<button type="button" class="fres" data-pick="${f.id}"><span>${esc(f.name)}<small>${esc(f.serving)}</small></span><b>${f.unit ? f.kcal + "<small>/100" + f.unit + "</small>" : f.kcal}</b></button>`).join("")
-          + `<button type="button" class="fres custom" data-customfood><span>➕ Not in the list? Add “${esc(q.trim())}” as a custom food</span></button>`;
+          + `<button type="button" class="fres custom" data-customfood><span>✏️ Use “${esc(q.trim())}” as my own food</span></button>`;
         $$("[data-pick]", v).forEach((b) => b.addEventListener("click", () => pick(FOOD_BY_ID[b.dataset.pick])));
         $$("[data-customfood]", v).forEach((b) => b.addEventListener("click", () => { custom = true; $("#fresults").innerHTML = ""; $("#fcustom").classList.remove("hidden"); $("#fname").value = q.trim(); $("#fkcal").focus(); $("#fadd").disabled = false; }));
       });
@@ -2503,11 +2517,15 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
       $("[data-scan]", v)?.addEventListener("click", scanModal);
       $$("[data-fcat]", v).forEach((b) => b.addEventListener("click", () => {
         state.foodCat = b.dataset.fcat; $$("[data-fcat]", v).forEach((x) => x.classList.toggle("on", x === b));
-        $("#fpicklist").innerHTML = catOptions(rec(state.me), state.foodCat); picked = null; pickedMeal = null; $("#fpicked").classList.add("hidden"); $("#fadd").disabled = true;
-        $("#fpicklist").focus();
+        const other = state.foodCat === "other";
+        $("#step4").classList.toggle("hidden", other); $("#otherPanel").classList.toggle("hidden", !other);
+        picked = null; pickedMeal = null; custom = false; $("#fpicked").classList.add("hidden"); $("#fcustom").classList.add("hidden"); $("#fadd").disabled = true;
+        if (other) { $("#fsearch").value = ""; $("#fresults").innerHTML = ""; $("#fsearch").focus(); }
+        else { $("#fpicklist").innerHTML = catOptions(rec(state.me), state.foodCat); $("#fpicklist").focus(); }
       }));
       $("#fpicklist", v)?.addEventListener("change", (e) => {
         let val = e.target.value;
+        if (val.startsWith("own")) { const x = ownFoods(rec(state.me))[Number(val.slice(3))]; if (!x) return; picked = null; pickedMeal = null; custom = true; $("#fcustom").classList.remove("hidden"); $("#fname").value = x.name; $("#fkcal").value = x.kcal; $("#fpicked").classList.add("hidden"); $("#fadd").disabled = false; return; }
         if (val.startsWith("fav")) {
           const x = frequentFoods(rec(state.me))[Number(val.slice(3))]; if (!x) return;
           if (x.type === "plan") { val = x.id; } // continues to the plan meal branch below
@@ -2534,7 +2552,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
         }
         if (picked && picked.unit) { if (!amount) return toast("Please enter how much."); const pk = picked, am = amount; if (await addEntry("foods", { ...base, foodId: pk.id, amount: am, kcal: foodKcal(pk, am), name: pk.name }, `🍽️ ${esc(pk.name)} (${am} ${pk.unit}): ${foodKcal(pk, am)} kcal logged.`)) learnScan({ type: "food", id: pk.id, name: pk.name, amount: am, kcal: foodKcal(pk, am) }); return; }
         if (picked) { const pk = picked, q = qty; if (await addEntry("foods", { ...base, foodId: pk.id, qty: q, kcal: Math.round(pk.kcal * q), name: pk.name }, `🍽️ ${esc(pk.name)}: ${Math.round(pk.kcal * q)} kcal logged.`)) learnScan({ type: "food", id: pk.id, name: pk.name, qty: q, kcal: Math.round(pk.kcal * q) }); return; }
-        if (custom) { const nm = $("#fname").value.trim(), kc = Number($("#fkcal").value); if (!nm || $("#fkcal").value === "") return toast("Please enter the food and its calories."); if (await addEntry("foods", { ...base, name: nm, kcal: kc }, `🍽️ ${esc(nm)} logged.`)) learnScan({ type: "custom", name: nm, kcal: kc }); return; }
+        if (custom) { const nm = $("#fname").value.trim(), kc = Number($("#fkcal").value); if (!nm || $("#fkcal").value === "") return toast("Please enter the food and its calories."); const prior = rec(state.me).foods.filter((f) => f.custom && (f.name || "").trim().toLowerCase() === nm.toLowerCase()).length; if (await addEntry("foods", { ...base, name: nm, kcal: kc }, `🍽️ ${esc(nm)} logged.${prior === 1 ? " ✏️ Added to <b>My own foods</b>." : ""}`)) learnScan({ type: "custom", name: nm, kcal: kc }); return; }
         toast("Type a food and choose it from the list.");
       });
     }
@@ -2670,11 +2688,19 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
   }
 
   // Page history for the Back button (and the phone's own back gesture).
-  const navStack = [];
+  const navStack = [], fwdStack = [];
   function goBack() {
     const prev = navStack.pop();
+    if (state.tab !== "today" || prev) { fwdStack.push({ tab: state.tab, logMode: state.logMode }); if (fwdStack.length > 30) fwdStack.shift(); }
     if (!prev) { state.tab = "today"; render(); window.scrollTo({ top: 0 }); return; }
     state.tab = prev.tab; state.logMode = prev.logMode; render(); window.scrollTo({ top: 0 });
+  }
+  function goForward() {
+    const next = fwdStack.pop(); if (!next) return;
+    navStack.push({ tab: state.tab, logMode: state.logMode }); if (navStack.length > 30) navStack.shift();
+    try { history.pushState({ sbc: navStack.length }, ""); } catch {}
+    state.jChecks = null; state.tab = next.tab; state.logMode = next.logMode; render(); window.scrollTo({ top: 0 });
+    if (next.tab === "admin") adminSend({ action: "view" });
   }
   window.addEventListener("popstate", () => { if (navStack.length || state.tab !== "today") goBack(); });
   function go(tab) {
@@ -2682,7 +2708,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     const from = { tab: state.tab, logMode: state.logMode };
     state.jChecks = null;
     if (["food", "move", "water", "sleep", "journal"].includes(tab)) { state.logMode = tab; state.sleepH = undefined; state.sleepQ = undefined; tab = "log"; }
-    if (from.tab !== tab || from.logMode !== state.logMode) { navStack.push(from); if (navStack.length > 30) navStack.shift(); try { history.pushState({ sbc: navStack.length }, ""); } catch {} }
+    if (from.tab !== tab || from.logMode !== state.logMode) { fwdStack.length = 0; navStack.push(from); if (navStack.length > 30) navStack.shift(); try { history.pushState({ sbc: navStack.length }, ""); } catch {} }
     state.tab = tab; render(); window.scrollTo({ top: 0, behavior: "smooth" });
     if (tab === "admin") adminSend({ action: "view" });
   }
