@@ -589,3 +589,59 @@ label.sub { font-size: .85rem; opacity: .85; }
 .cnt em { display: block; font-style: normal; font-size: .8rem; opacity: .8; margin-bottom: 6px; }
 .cnt > small { display: block; font-size: .68rem; opacity: .75; margin-top: 4px; }
 .kdlen { display: inline-block; margin-left: 8px; font-size: .72rem; opacity: .7; }
+
+.glassml { font-size: .88rem; opacity: .9; margin: -4px 0 10px; }
+
+.backbtn { display: inline-flex; align-items: center; gap: 4px; margin: 0 0 10px; padding: 8px 14px; border-radius: 99px; border: 1px solid var(--line); background: #17130C; color: var(--gold2); font: inherit; font-weight: 700; font-size: .95rem; cursor: pointer; }
+details.mealgroup { border: 1px solid var(--line); border-radius: 12px; padding: 0 10px; margin-top: 8px; background: #15110A; }
+details.mealgroup summary.mghead { list-style: none; cursor: pointer; border-bottom: 0; margin: 0; padding: 12px 2px; }
+details.mealgroup summary::-webkit-details-marker { display: none; }
+details.mealgroup[open] summary.mghead { border-bottom: 1px solid var(--line); }
+details.mealgroup .list { padding-bottom: 6px; }
+
+/* Food categories */
+.catgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+.catbtn { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px 4px; border-radius: 12px; border: 1px solid var(--line); background: #1C170D; color: inherit; font: inherit; cursor: pointer; min-height: 78px; text-align: center; }
+.catbtn span { font-size: 1.5rem; }
+.catbtn b { font-size: .74rem; line-height: 1.15; }
+.catbtn small { font-size: .66rem; opacity: .6; }
+.catbtn.on { border-color: var(--gold); background: #2A200A; box-shadow: 0 0 0 1px var(--gold) inset; }
+
+.cuhead { padding: 10px 12px; border-radius: 12px; background: #231B0B; border: 1px solid var(--gold); margin-bottom: 8px; }
+.cuhead b { display: block; font-size: 1.02rem; color: var(--gold2); }
+.cuhead small { display: block; opacity: .85; margin-top: 2px; }
+.cuhead.done { background: #14200F; border-color: #3E6B2A; }
+.cuhead.done b { color: #8BD66B; }
+.cuopts { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.cuopts .planbtn { font-size: .88rem; padding: 10px; min-height: 48px; }
+.tipline.insight { display: block; }
+
+.pushprefs { display: grid; gap: 8px; margin: 10px 0; }
+.pushprefs .check { display: flex; gap: 10px; align-items: flex-start; font-size: .9rem; }
+.synccode { font-family: ui-monospace, Menlo, monospace; font-size: 1.3rem; letter-spacing: 1px; padding: 10px; border-radius: 10px; background: #0E0B07; border: 1px dashed var(--gold); text-align: center; user-select: all; }
+.buddy .cheerin { padding: 10px 12px; border-radius: 12px; background: #14200F; border: 1px solid #3E6B2A; margin-bottom: 10px; }
+.av.md { width: 46px; height: 46px; }
+.maint { border-color: #3E6B2A; }
+#view textarea { width: 100%; font: inherit; }
+
+.alertcard { border-color: #7A2E22; }
+.gwlist { display: grid; gap: 8px; }
+.gwrow { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; padding: 8px; border: 1px solid var(--line); border-radius: 12px; }
+.gwrow > b { grid-column: 1 / -1; }
+.gwrow label { font-size: .75rem; }
+@media print { body * { visibility: hidden; } .printable, .printable * { visibility: visible; } .printable { position: absolute; inset: 0; background: #fff; color: #000; } .noprint { display: none !important; } }
+
+.scanbtn { margin: 6px 0 10px; border-style: dashed; }
+.scanimg { width: 100%; max-height: 220px; object-fit: cover; border-radius: 12px; margin: 10px 0; }
+
+.scanopts .planbtn { flex-direction: column; align-items: flex-start; gap: 2px; }
+.scanopts .planbtn small { white-space: normal; }
+
+.defrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+.defrow > div { padding: 10px; border-radius: 12px; background: #1C170D; border: 1px solid var(--line); }
+.defrow small { display: block; opacity: .75; font-size: .78rem; }
+.defrow b { display: block; font-size: 1.3rem; color: var(--gold2); }
+
+.syncrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.installbtn { padding: 6px 12px; border-radius: 99px; border: 1px solid var(--gold); background: linear-gradient(135deg, #F2B134, #D99A1E); color: #1A1200; font: inherit; font-weight: 800; font-size: .82rem; cursor: pointer; white-space: nowrap; }
+.installbtn[hidden] { display: none; }

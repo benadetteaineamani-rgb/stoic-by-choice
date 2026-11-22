@@ -1,8 +1,8 @@
 /* Stoic by Choice · Biggest Loser Challenge (participant and admin app)
    Talks to the secure API in netlify/functions/api.mjs. Points, rankings and awards are calculated on the
    server with the same rules file (core.js) that this app uses for display. */
-import { FOODS, FOOD_BY_ID, SERVINGS, GRAM_CHIPS, foodKcal, searchFoods } from "./foods.js";
-import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BADGES, HOLIDAYS, MOODS, SLEEP_QUALITY, JOURNAL_CHECKS, KCAL_PER_KG, todaySA, addDays, diffDays, pad, dow, holiday, emptyRecord, normRecord } from "./core.js";
+import { FOODS, FOOD_BY_ID, CATEGORIES, SERVINGS, GRAM_CHIPS, foodKcal, searchFoods } from "./foods.js";
+import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER_WEEK, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BADGES, HOLIDAYS, MOODS, SLEEP_QUALITY, JOURNAL_CHECKS, KCAL_PER_KG, todaySA, addDays, diffDays, pad, dow, holiday, emptyRecord, normRecord } from "./core.js";
 
 (() => {
   "use strict";
@@ -46,13 +46,14 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
     ["Boxing / kickboxing class", 7.8, 0, 0, "Gym"], ["Zumba", 6.5, 0, 0, "Gym"], ["Aerobics / step class", 7.3, 0, 0, "Gym"], ["Pilates", 3.0, 0, 0, "Gym"],
     ["Yoga / stretching", 2.5, 0, 0, "Gym"], ["Push ups, sit ups, squats (vigorous)", 8.0, 0, 0, "Gym"], ["Aqua aerobics", 5.3, 0, 0, "Gym"],
     ["Stairs: up to a floor and back down", 0, 0, 0, "Stairs", "floors"],
+    ["Stairs up, lift back down", 0, 0, 0, "Stairs", "floors", "up"],
     ["Stairs, walking up and down", 4.0, 0, 0, "Stairs"], ["Stairs, fast climbing", 8.8, 0, 0, "Stairs"], ["Running up stairs", 15.0, 0, 0, "Stairs"],
     ["Cycling, leisurely", 4.0, 15, 0, "Other"], ["Cycling, moderate", 8.0, 20, 0, "Other"], ["Swimming, leisurely", 6.0, 2, 0, "Other"], ["Swimming laps, vigorous", 9.8, 2.5, 0, "Other"],
     ["Social dancing", 4.5, 0, 0, "Other"], ["Skipping rope", 11.8, 0, 0, "Other"], ["Soccer / netball, casual", 7.0, 0, 0, "Other"], ["Tennis", 7.3, 0, 0, "Other"],
     ["Basketball", 6.5, 0, 0, "Other"], ["Gardening", 3.8, 0, 0, "Other"], ["House cleaning", 3.3, 0, 0, "Other"],
   ];
   // One tap activities: [button label, activity name, minutes, km or floors]
-  const QUICK_MOVES = [["🚶🏾 Walk 30 min", "Walking, brisk", 30], ["🏃🏾 Run 5 km", "Run 5 km (parkrun)", 35], ["🏢 Stairs to floor 15 and back", "Stairs: up to a floor and back down", 8, 15], ["🚴🏾 Spinning 45 min", "Spinning class (indoor cycling)", 45], ["🏋🏾 Gym weights 45 min", "Weights / strength training", 45], ["💃🏾 Dance 30 min", "Social dancing", 30]];
+  const QUICK_MOVES = [["🚶🏾 Walk 30 min", "Walking, brisk", 30], ["🏃🏾 Run 5 km", "Run 5 km (parkrun)", 35], ["🏢 Stairs to floor 15 and back", "Stairs: up to a floor and back down", 8, 15], ["🛗 Stairs up, lift down: how many times?", "Stairs up, lift back down", 0, 0, "ask"], ["🚴🏾 Spinning 45 min", "Spinning class (indoor cycling)", 45], ["🏋🏾 Gym weights 45 min", "Weights / strength training", 45], ["💃🏾 Dance 30 min", "Social dancing", 30]];
   function quickEntry(q) {
     const i = ACTIVITIES.findIndex((x) => x[0] === q[1]), act = ACTIVITIES[i], w = latestWeight(rec(state.me)) || 70, mins = q[2];
     if (act[5] === "floors") { const up = q[3] * 20; return { activity: `Stairs to floor ${q[3]} and back`, minutes: mins, kcal: Math.round(up * 0.16 * w / 70), distanceKm: 0, steps: up * 2 }; }
@@ -158,6 +159,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
     state.manualAwards = data.manualAwards || [];
     state.announcements = data.announcements || [];
     state.aggregates = data.aggregates || null;
+    state.buddy = data.buddy || null; state.cheers = data.cheers || { received: [], sent: [] }; state.push = data.push || null; state.syncCodeSet = !!data.syncCodeSet;
     state.finale = data.finale || state.finale || { revealed: false, revealAt: null };
     if (data.admin) state.admin = data.admin;
     state.online = true; state.lastSync = new Date();
@@ -203,7 +205,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
   // ---------- Rules engine (the same code the server uses for the official points) ----------
   const E = makeEngine({ settings, config: () => state.config, today: todayStr, challengeDefs: () => state.challenges, adjustments: () => [] });
   const { weighDays, isWeighDay, nextWeighDay, lastWeighDay, startWeight, weightOn, latestWeight, isMinor, isChild, habitsOnly, maxRate,
-    planRate, calorieFloor, energy, dayTotals, dayStatus, dayPoints, scorecard, activeMinutes, ledger, eating, habitsOn, HABIT_KEYS, bmi, weeks, treats, challengeDay, challengeWeeks, currentWeek, challengeMonths, glasses, waterTarget, sleepTarget, sleepOn, stepGoal, daySteps, dayKm, officialWeightOn } = E;
+    planRate, calorieFloor, energy, dayTotals, dayStatus, dayPoints, scorecard, weighResult, activeMinutes, ledger, eating, habitsOn, HABIT_KEYS, bmi, weeks, treats, challengeDay, challengeWeeks, currentWeek, challengeMonths, glasses, waterTarget, sleepTarget, sleepOn, stepGoal, daySteps, dayKm, officialWeightOn } = E;
   const treatOn = (r, d) => (r.treats || []).some((t) => t.date === d);
   const sortByDate = (arr) => [...arr].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const ZERO = {
@@ -246,7 +248,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
       ${row("👋🏾", "Check in: tap the big button or log anything", "+" + POINTS.checkin)}
       ${row("🍽️", "Eat and log 3 meals (breakfast, lunch, dinner)", "+" + POINTS.food)}
       ${row("👟", `Move: ${MOVE_MINUTES} active minutes <i>or</i> ${fmt(stepGoal())} steps`, "+" + POINTS.exercise)}
-      ${row(glassSvg(true, "sm"), `Drink ${waterTarget()} glasses of water`, "+" + POINTS.water)}
+      ${row(glassSvg(true, "sm"), `Drink ${waterTarget()} glasses of water (1 glass = 250 ml, so ${fmt(waterTarget() * 0.25, 1)} litres)`, "+" + POINTS.water)}
       ${row("🌙", "Sleep 7 hours or more (8 for under 18s)", "+" + POINTS.sleep)}
       ${row("📓", "Journal: tick what you did today", "+" + POINTS.reflect)}
       ${row("🎯", "Daily challenge (Tuesday, Friday, Saturday)", "+" + POINTS.task)}
@@ -254,9 +256,16 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
       <h3>⚠️ Lose points</h3>
       ${row("🚫", "A day with nothing logged", POINTS.missed, "neg")}
       ${row("🍽️", "Skipped meals or starving (fewer than 3 meals, or too little food)", POINTS.eatPenalty, "neg")}
-      <p class="pgnote">Public holidays and days before you joined never lose points. 🚩 Flags (too much fruit, milk, eating after 9 PM…) cost <b>no</b> points; they are warnings.</p>
+      ${row("🚩", "More than 3 bad habit flags in one day (from 22 November)", POINTS.flagPenalty, "neg")}
+      <p class="pgnote">Public holidays and days before you joined never lose points. 🚩 Flags are warnings (too much fruit, milk, eating after 9 PM, mixed proteins…). Up to 3 in a day cost nothing; a 4th costs ${Math.abs(POINTS.flagPenalty)} points for that day (once, not per flag).</p>
       <h3>⭐ Extras</h3>
       ${row("⚖️", "Official Saturday weigh in (entered by the administrator)", "+" + POINTS.weighin)}
+      <h3>⚖️ Weigh in result <small>(from the 5 December weigh in, compared with your previous official weight)</small></h3>
+      ${row("🏅", `Lost at least the minimum (${WEIGH_MIN_PER_WEEK.adult} kg a week; ${WEIGH_MIN_PER_WEEK.junior} kg for under 18s, so ${WEIGH_MIN_PER_WEEK.adult * 2} kg or ${WEIGH_MIN_PER_WEEK.junior * 2} kg per two week weigh in)`, "+" + POINTS.weighMinMet)}
+      ${row("📉", "Lost weight, but less than the minimum", "+" + POINTS.weighLost)}
+      ${row("➖", "No weight lost", POINTS.weighBelowMin, "neg")}
+      ${row("📈", "Weight gained", POINTS.weighGain, "neg")}
+      <p class="pgnote">Children under 12 (still growing): kept steady or lost <b>+${POINTS.weighMinMet}</b>; a small gain within normal growth (up to 0,25 kg a week) <b>0</b>; a bigger gain <b>${POINTS.weighBelowMin}</b>. Children are never pushed to lose weight.</p>
       ${row("🎁", `Treat week: check in every day and move ${TREAT.minutes} minutes in the week`, "+" + POINTS.treatBonus)}
       ${row("📉", "Weight lost at official weigh ins, up to a safe pace", `+${POINTS.perPercent} per 1%`)}
       <h3>🏆 How winners are decided</h3>
@@ -470,9 +479,10 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
     $$("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === state.tab));
     if (!signedIn) { $("#view").innerHTML = viewAuth(); bindAuth(); return; }
     if (state.pending || !state.me) { $("#view").innerHTML = viewPending(); bindAuth(); return; }
-    const views = { today: viewToday, challenge: viewChallenge, log: () => ({ move: viewMove, water: viewWater, sleep: viewSleep, journal: viewJournal }[state.logMode] || viewFood)(), food: viewFood, move: viewMove, board: viewBoard, awards: viewAwards, calendar: viewCalendar, calc: viewCalc, me: viewMe, admin: viewAdmin };
+    const views = { today: viewToday, challenge: viewChallenge, log: () => ({ move: viewMove, water: viewWater, sleep: viewSleep, journal: viewJournal }[state.logMode] || viewFood)(), food: viewFood, move: viewMove, board: viewBoard, awards: viewAwards, calendar: viewCalendar, profile: viewProfile, recipes: viewRecipes, calc: viewCalc, me: viewMe, admin: viewAdmin };
     if (state.tab === "admin" && a.role !== "admin") state.tab = "today";
-    $("#view").innerHTML = (views[state.tab] || viewToday)();
+    $("#view").innerHTML = (state.tab !== "today" ? `<button class="backbtn" data-back>‹ Back</button>` : "") + (views[state.tab] || viewToday)();
+    $("[data-back]")?.addEventListener("click", () => { if (navStack.length) { try { history.back(); return; } catch {} } goBack(); });
     bind();
     if (state.tab === "admin") bindAdmin();
     tickCountdown();
@@ -541,7 +551,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
         <span class="grow"><b>${esc(it.label)}</b><small>${esc(it.how)}${it.progress ? ` · <em>${esc(it.progress)}</em>` : ""}${it.warn && d === todayStr() && it.k === "food" ? `<br><span class="warnline">⚠️ Fewer than 3 meals by tonight costs ${Math.abs(POINTS.eatPenalty)} points${saHour() >= 18 ? ". Last meal before 9 PM" : ""}</span>` : ""}</small></span>
         <span class="scpts">${it.flag ? "Bad habit" : it.penalty ? it.pts : `${it.done ? "✓ " : ""}${it.auto ? "" : "+" + it.pts}`}</span></div>`).join("")}</div>
       <div class="tiles" style="margin-top:12px">
-        <div class="tile water ${g >= wt ? "done" : ""}"><div class="tile-top" data-go="water">${glassSvg(true)}<b>${g}<small>/${wt}</small></b></div><small data-go="water">glasses</small>
+        <div class="tile water ${g >= wt ? "done" : ""}"><div class="tile-top" data-go="water">${glassSvg(true)}<b>${g}<small>/${wt}</small></b></div><small data-go="water">glasses of 250 ml</small>
           <button class="tile-plus" data-water="1" aria-label="One more glass">+ 1</button></div>
         <div class="tile sleep ${sl && sl.hours >= stg ? "done" : ""}" data-go="sleep" role="button" tabindex="0"><div class="tile-top">🌙<b>${sl ? fmt(sl.hours, 1) : "–"}<small> h</small></b></div><small>${sl ? "sleep" + (sl.quality ? " " + SLEEP_QUALITY[sl.quality] : "") : "log sleep"}</small>
           <div class="bar"><i style="width:${sl ? Math.min(100, (sl.hours / stg) * 100) : 0}%"></i></div></div>
@@ -582,6 +592,13 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
   }
 
   // BMI: private (only the person and the administrator). Adults use WHO categories; under 18s need a BMI for age chart.
+  // Points from each official weigh in (private: only you and the administrator see your weights).
+  function weighResultsCard(r) {
+    const list = weighDays().filter((d) => d <= todayStr()).map((d) => [d, weighResult(r, d)]).filter(([, x]) => x).reverse();
+    if (!list.length) return "";
+    return `<section class="card"><h2>⚖️ My weigh in results</h2><div class="list">${list.map(([d, x]) => `<div class="item"><div class="grow"><div class="t">${esc(x.label.replace("Weigh in: ", ""))}</div><div class="s">${fmtDate(d, { weekday: "short", day: "numeric", month: "short" })} · ${esc(x.how)}</div></div><div class="k" style="color:${x.pts < 0 ? "#FF7A63" : "#8BD66B"}">${x.pts > 0 ? "+" : ""}${x.pts}</div></div>`).join("")}</div>
+      <p class="note">Plus +${POINTS.weighin} for attending each official weigh in.</p></section>`;
+  }
   function bmiCard(r) {
     const p = r.profile;
     if (!p.heightCm) return `<section class="card"><h2>📏 My BMI</h2><p class="note">Add your height in <b>My profile</b> below to see your body mass index (BMI) and how it changes.</p></section>`;
@@ -703,28 +720,156 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
   // Save to home screen (installable app)
   const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
   const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  function installSteps() {
+    return isIOS()
+      ? `<ol class="installsteps"><li>Open this page in <b>Safari</b>.</li><li>Tap the <b>Share</b> button <span class="ib">⬆️</span> at the bottom of the screen.</li><li>Scroll down and tap <b>Add to Home Screen</b> <span class="ib">➕</span>.</li><li>Tap <b>Add</b>. The Stoic by Choice book icon appears on your home screen.</li></ol>`
+      : `<ol class="installsteps"><li>Open this page in <b>Chrome</b>.</li><li>Tap the <b>⋮ menu</b> at the top right.</li><li>Tap <b>Add to Home screen</b> or <b>Install app</b>.</li><li>Tap <b>Install</b>. The Stoic by Choice book icon appears on your home screen.</li></ol>`;
+  }
+  async function installApp() {
+    if (isStandalone()) return toast("✅ The app is already on your home screen.");
+    const ev = state.installEvt;
+    if (ev) { ev.prompt(); const c = await ev.userChoice.catch(() => null); state.installEvt = null; if (c && c.outcome === "accepted") toast("📲 Installed. Find the Stoic by Choice icon on your home screen."); render(); return; }
+    const m = modal(`<h2>📲 Add the app to your home screen</h2><p class="note" style="margin-top:0">It then opens full screen with one tap, like any app, and can send you reminders.</p>${installSteps()}<button class="btn full" data-closeinstall>Got it</button>`);
+    $("[data-closeinstall]", m).addEventListener("click", closeModal);
+  }
+  function updateInstallBtn() { const b = document.getElementById("installBtn"); if (b) b.hidden = isStandalone(); }
   function installCard() {
     if (isStandalone()) return "";
     let hidden = false; try { hidden = localStorage.getItem("sbc_install_hide") === "1"; } catch {}
     if (hidden) return "";
-    const how = state.installEvt
-      ? `<button class="btn full" data-install>📲 Save the app to my phone</button>`
-      : isIOS()
-        ? `<ol class="installsteps"><li>Tap the <b>Share</b> button <span class="ib">⬆️</span> at the bottom of Safari</li><li>Scroll and tap <b>Add to Home Screen</b> <span class="ib">➕</span></li><li>Tap <b>Add</b>. The Stoic by Choice book icon appears on your screen</li></ol>`
-        : `<ol class="installsteps"><li>Tap the <b>⋮ menu</b> at the top right of Chrome</li><li>Tap <b>Add to Home screen</b> or <b>Install app</b></li><li>Tap <b>Install</b>. The Stoic by Choice book icon appears on your screen</li></ol>`;
+    const how = `<button class="btn full" data-install>📲 Add to home screen</button>`;
     return `<section class="card installcard"><div class="row between"><div class="row" style="gap:10px"><img src="/icons/icon-192.png" alt="" width="44" height="44" style="border-radius:12px"><div><b>Put the app on your phone</b><br><small>Opens full screen with one tap, like any app.</small></div></div><button class="del" data-installhide aria-label="Hide">✕</button></div>${how}</section>`;
+  }
+
+  // ---------- Personal coach: a catch up challenge from yesterday, and advice learned from each person's own habits ----------
+  // Advice follows widely used public health guidance: WHO (activity), NHS and CDC (safe loss of 0.5 to 1 kg a week,
+  // regular meals, water, self monitoring), and sleep guidance (7 to 9 hours for adults, 8 to 10 for teenagers).
+  const FLAG_ADVICE = {
+    late: "Eating late: plan dinner before 9 PM and have a cup of herbal tea instead of a late snack.",
+    gap: "Meals too close together: keep about 5 hours between meals; drink water or tea in between.",
+    fruit: "Too much fruit: fruit sugar adds up. Keep to 2 portions and add vegetables when hungry.",
+    provita: "Too many Provitas: keep to your allowance, never more than 2 at a time.",
+    atonce: "More than 2 at a time: spread fruit and Provitas across the day.",
+    bad: "Foods not on the plan: plan tomorrow's meals tonight and keep allowed snacks (vegetables, gum) close.",
+    mixed: "Mixed proteins: choose one protein per meal and fill the rest of the plate with vegetables.",
+    cheese: "Cheese twice: keep cheese to one meal a day.", feta: "Feta more than once this week: save it for one meal a week.",
+    onion: "Too much onion: keep to 2 tablespoons (30 g) a day.", tomato: "Too much tomato: keep to 70 g a day.",
+    mayo: "Mayonnaise: one level teaspoon of lite mayonnaise a day.", soy: "Soy sauce: one teaspoon a day; salt makes you hold water.",
+    coffee: "Lots of coffee: switch to decaf or herbal tea after 8 cups.", fizzy: "Diet fizzy drinks: keep under 1 litre; water first.",
+    schweppes: "Schweppes Lemon Lite: one can a day.", gum: "Gum: no more than 5 sticks a day.",
+  };
+  const HABIT_ADVICE = {
+    food: "Log every meal as you eat it. People who keep a food record lose more weight than those who do not.",
+    move: "Aim for at least 150 minutes of moderate activity a week (WHO), for example 30 minutes on 5 days. Stairs and brisk walks count.",
+    water: "Drink 8 glasses (2 litres) a day. Start the morning with a glass and keep a bottle with you.",
+    sleep: "Sleep 7 to 9 hours (teenagers 8 to 10). Short sleep raises hunger hormones and makes cravings harder to resist.",
+    journal: "Tick your journal each evening. Noticing patterns is how habits change.",
+  };
+  function burnOptions(kcal, w) {
+    const walk = Math.max(10, Math.round(kcal / ((4.3 * w) / 60) / 5) * 5), run = Math.max(1, Math.round((kcal / w) * 2) / 2), spin = Math.max(10, Math.round(kcal / ((8.5 * w) / 60) / 5) * 5);
+    const perStairs = (15 * 20 * 0.16 * w) / 70, stairs = Math.max(1, Math.ceil(kcal / perStairs));
+    const opts = [["🚶🏾", `Brisk walk ${walk} min`, /walk|hik/], ["🏃🏾", `Run ${String(run).replace(".", ",")} km`, /run|jog/], ["🏢", `Stairs to floor 15 and back ${stairs} time${stairs > 1 ? "s" : ""}`, /stair/], ["🚴🏾", `Spinning ${spin} min`, /spin|cycl|bike/]];
+    const fav = String(rec(state.me).profile.favExercise || "").toLowerCase();
+    return opts.sort((a, b) => b[2].test(fav) - a[2].test(fav)).map(([i, t, re]) => [i, re.test(fav) ? t + " ⭐" : t]);
+  }
+  // ---------- Daily routine: vitamin, 5 minute meditation, quick journal write up ----------
+  const ROUTINE = [["vitamin", "💊", "Took my Centrum", "With breakfast"], ["meditate", "🧘🏾", "5 minute meditation", "Sit, breathe slowly, notice what is in your control"], ["write", "✍🏾", "Quick journal write up", "A few lines about anything, on paper or in the app"]];
+  function routineDone(r, k, d = todayStr()) { return (r.routine || []).some((x) => x.date === d && x.kind === k) || (k === "vitamin" && r.foods.some((f) => f.date === d && /^(centrum|vitamins|vitc)$/.test(f.foodId || ""))); }
+  function routineCard() {
+    const r = rec(state.me), n = ROUTINE.filter(([k]) => routineDone(r, k)).length;
+    return `<section class="card"><div class="row between"><h2>🌿 Daily routine</h2><span class="pill ${n === 3 ? "good" : ""}">${n} of 3</span></div>
+      <div class="sclist">${ROUTINE.map(([k, i, l, how]) => { const d = routineDone(r, k); return `<div class="scrow ${d ? "done" : ""}" ${d ? "" : `data-routine="${k}"`} role="button" tabindex="0"><span class="scicon">${i}</span><span class="grow"><b>${l}</b><small>${how}</small></span><span class="scpts">${d ? "✓" : "Tap"}</span></div>`; }).join("")}</div>
+      <p class="note">Small daily routines support weight loss: steady habits, less stress eating and better sleep. Turn on reminders in Progress.</p></section>`;
+  }
+
+  // ---------- Calorie deficit tracker ----------
+  // Deficit = what your body uses in a day (TDEE) + exercise − food eaten. About 7 700 kcal is roughly 1 kg of body fat.
+  function deficitCard() {
+    const r = rec(state.me), e = energy(r), t = todayStr(), s0 = settings().start;
+    if (!e) return `<section class="card"><h2>🔥 Calorie deficit</h2><p class="note" style="margin:0">Add your age, height and activity level in <a href="#" data-go="profile">your profile</a> to track your daily calorie deficit.</p></section>`;
+    if (isMinor(r)) return `<section class="card"><h2>🔥 Energy balance</h2><p class="note" style="margin:0">Growing bodies need enough food. For under 18s the app does not push a calorie deficit: eat your 3 meals, move every day and the habits do the work.</p></section>`;
+    const def = (d) => { const tt = dayTotals(r, d); return r.foods.some((f) => f.date === d) ? Math.round(e.tdee + tt.burned - tt.eaten) : null; };
+    const goal = Math.round(e.tdee - e.target), today = def(t), w = currentWeek();
+    const days = []; for (let d = w.w0 > s0 ? w.w0 : s0; d <= t; d = addDays(d, 1)) days.push(d);
+    const vals = days.map(def), weekSum = vals.reduce((a, v) => a + (v || 0), 0), weekGoal = goal * days.length;
+    const tooBig = today !== null && today > Math.max(1000, goal * 1.6);
+    return `<section class="card deficit"><div class="row between"><h2>🔥 Calorie deficit</h2><span class="pill ${today !== null && today >= goal ? "good" : ""}">goal ${fmt(goal)} kcal a day</span></div>
+      <div class="defrow"><div><small>Today so far</small><b style="color:${today === null ? "inherit" : today >= goal ? "#8BD66B" : today >= 0 ? "#F2B134" : "#FF7A63"}">${today === null ? "–" : fmt(today) + " kcal"}</b><small>${today === null ? "log your food" : today >= goal ? "on target ✓" : today >= 0 ? `${fmt(goal - today)} kcal to go` : "surplus: over budget"}</small></div>
+        <div><small>This week</small><b>${fmt(weekSum)} kcal</b><small>of ${fmt(weekGoal)} · ≈ ${fmt(weekSum / 7700, 2)} kg</small></div></div>
+      <div class="bar"><i style="width:${Math.max(0, Math.min(100, (weekSum / (weekGoal || 1)) * 100))}%"></i></div>
+      ${days.length >= 2 ? barChart({ days, values: vals.map((v) => Math.max(0, v || 0)), color: "#E98A3C", goal, label: "kcal", short: true }) : ""}
+      <p class="note">Your body uses about ${fmt(e.tdee)} kcal a day; eating ${fmt(e.target)} plus your exercise gives the deficit. About 7 700 kcal ≈ 1 kg.${tooBig ? " ⚠️ Today's deficit is very large: eat your full meals; going too low makes you lose muscle and rebound later." : ""} Food is counted from what you log, so log everything.</p></section>`;
+  }
+
+  function catchUpCard() {
+    const r = rec(state.me), t = todayStr(), y = addDays(t, -1); if (y < settings().start || (r.profile.joinedDate && y < r.profile.joinedDate)) return "";
+    const ey = eating(r, y), sy = scorecard(r, y), flags = ey.flags, w = latestWeight(r) || 70, minor = isMinor(r), e = energy(r), ty = dayTotals(r, y);
+    const anyY = dayStatus(r, y).any, moved = sy.items.find((x) => x.k === "move")?.done;
+    const surplus = e && !minor && ey.kcal > 0 ? Math.round(ty.eaten - e.target - ty.burned) : 0;
+    const lines = [];
+    if (!anyY) lines.push(["😴", "Nothing was logged yesterday. Today is a fresh start: check in, log 3 meals and move."]);
+    if (ey.kcal > 0 && (ey.tooLittle || ey.meals < 3)) lines.push(["🍽️", `You ate too little yesterday (${ey.meals} of 3 meals${ey.kcal ? `, ${fmt(ey.kcal)} kcal` : ""}). Eating too little slows your metabolism and leads to overeating later. Today: eat all 3 meals; do not cut calories.`]);
+    [...new Map(flags.map((f) => [f.k, f])).values()].slice(0, 4).forEach((f) => lines.push(["🚩", FLAG_ADVICE[f.k] || f.how]));
+    if (anyY && !moved) lines.push(["👟", `You did not reach ${MOVE_MINUTES} active minutes yesterday. Add it to today (see Catch up).`]);
+    // Calorie catch up: yesterday's surplus, or about 100 kcal per bad habit. Never for under 18s, never after under eating.
+    let kcal = 0;
+    if (!minor && !(ey.tooLittle || (ey.kcal > 0 && ey.meals < 3))) kcal = Math.min(500, Math.max(surplus > 0 ? surplus : 0, Math.min(400, flags.length * 100)));
+    kcal = Math.round(kcal / 50) * 50;
+    if (!lines.length && !kcal) return `<section class="card coach"><div class="label">🎯 Today's catch up</div><p style="margin:0">Yesterday was clean: no bad habits and nothing to catch up. Keep the streak going. 🌟</p></section>`;
+    const burned = dayTotals(r, t).burned, done = kcal && burned >= kcal;
+    return `<section class="card coach catchup"><div class="label">🎯 Today's catch up (from yesterday)</div>
+      ${kcal ? `<div class="cuhead ${done ? "done" : ""}"><b>${done ? "✓ Done: " : ""}Create a ${fmt(kcal)} kcal deficit today</b><small>${surplus > 0 ? `Yesterday you were ${fmt(surplus)} kcal over your budget.` : `${flags.length} bad habit${flags.length > 1 ? "s" : ""} yesterday.`} Burned today so far: ${fmt(burned)} kcal.</small></div>
+        <div class="cuopts">${burnOptions(kcal, w).map(([i, tx]) => `<button class="planbtn" data-go="move"><span>${i} ${tx}</span></button>`).join("")}</div>
+        <p class="note">Or eat about ${fmt(Math.min(kcal, 300))} kcal less spread over the day (smaller portions, no extra snacks), but never skip a meal or go below your safe minimum.</p>` : ""}
+      ${lines.map(([i, tx]) => `<div class="tipline">${i} ${esc(tx)}</div>`).join("")}
+    </section>`;
+  }
+  // What the app has learned about you (last 14 days of your own entries).
+  function insightsCard() {
+    const r = rec(state.me), t = todayStr(), from = [settings().start, r.profile.joinedDate || settings().start, addDays(t, -14)].sort().pop();
+    const days = []; for (let d = from; d < t; d = addDays(d, 1)) days.push(d);
+    if (days.length < 4) return `<section class="card"><div class="label">🧠 Learning your habits</div><p class="note" style="margin:0">After 4 days of logging, your coach starts giving advice based on your own patterns. ${days.length} day${days.length === 1 ? "" : "s"} so far.</p></section>`;
+    const rate = {}; for (const k of HABIT_KEYS) rate[k] = days.filter((d) => habitsOn(r, d)[k]).length / days.length;
+    const weakest = HABIT_KEYS.slice().sort((a, b) => rate[a] - rate[b])[0], best = HABIT_KEYS.slice().sort((a, b) => rate[b] - rate[a])[0];
+    const flagCount = {}; days.forEach((d) => eating(r, d).flags.forEach((f) => { flagCount[f.k] = (flagCount[f.k] || 0) + 1; }));
+    const topFlag = Object.entries(flagCount).sort((a, b) => b[1] - a[1])[0];
+    const dow = {}; days.forEach((d) => { const k = new Date(d + "T12:00:00").toLocaleDateString("en-GB", { weekday: "long" }); (dow[k] = dow[k] || []).push(Math.max(0, dayPoints(r, d))); });
+    const avg = Object.entries(dow).filter(([, v]) => v.length >= 2).map(([k, v]) => [k, v.reduce((a, b) => a + b, 0) / v.length]).sort((a, b) => a[1] - b[1]);
+    const logged = days.filter((d) => r.foods.some((f) => f.date === d)), e = energy(r);
+    const avgKcal = logged.length ? Math.round(logged.reduce((a, d) => a + dayTotals(r, d).eaten, 0) / logged.length) : 0;
+    const lastW = weighDays().filter((d) => d <= t).map((d) => weighResult(r, d)).filter(Boolean).pop();
+    const out = [];
+    out.push(["💪🏾", `Your strongest habit: <b>${HABIT_META[best][1]}</b> (${Math.round(rate[best] * 100)}% of days). Keep it.`]);
+    if (rate[weakest] < 0.8) out.push(["🎯", `Your weakest habit: <b>${HABIT_META[weakest][1]}</b> (${Math.round(rate[weakest] * 100)}% of days). ${HABIT_ADVICE[weakest]}`]);
+    if (topFlag && topFlag[1] >= 2) out.push(["🚩", `Your most common bad habit: <b>${esc(FLAG_ADVICE[topFlag[0]] ? FLAG_ADVICE[topFlag[0]].split(":")[0] : topFlag[0])}</b> (${topFlag[1]} times). ${esc((() => { const x = FLAG_ADVICE[topFlag[0]] ? FLAG_ADVICE[topFlag[0]].split(": ").slice(1).join(": ") : ""; return x.charAt(0).toUpperCase() + x.slice(1); })())}`]);
+    if (avg.length >= 2 && avg[0][1] < avg[avg.length - 1][1] - 3) out.push(["📅", `Your hardest day is usually <b>${avg[0][0]}</b>. Plan it the night before: meals ready, walk booked.`]);
+    if (e && avgKcal && !isMinor(r)) {
+      if (avgKcal < calorieFloor(r) * 0.85 && !eating(r, t).onPlan) out.push(["🍽️", `You are eating about ${fmt(avgKcal)} kcal a day, below your safe minimum of ${fmt(calorieFloor(r))}. Eating too little makes weight loss harder to keep up and can cost muscle. Eat all 3 meals.`]);
+      else if (avgKcal > e.target + 150) out.push(["⚖️", `You are eating about ${fmt(avgKcal)} kcal a day, ${fmt(avgKcal - e.target)} over your target of ${fmt(e.target)}. Smaller portions of starch and fill half the plate with vegetables.`]);
+    }
+    if (lastW && lastW.pts < 0) out.push(["📈", lastW.lost < 0 ? "You gained at the last weigh in. Check for hidden extras (oil, sugar, sauces, drinks), weigh food raw, drink your 8 glasses and keep moving. One weigh in does not define you." : "No loss at the last weigh in. Plateaus are normal; tighten portions, log everything, add 10 minutes of walking a day and sleep 7 hours or more."]);
+    else if (lastW && lastW.pts > 0) out.push(["📉", "You lost weight at the last weigh in. A safe pace is 0.5 to 1 kg a week; keep doing what works."]);
+    return `<section class="card coach"><div class="label">🧠 What your coach has learned about you</div><p class="note" style="margin-top:0">From your last ${days.length} days of entries.</p>
+      ${out.map(([i, tx]) => `<div class="tipline insight">${i} ${tx}</div>`).join("")}</section>`;
   }
 
   function viewToday() {
     return `${installCard()}
       ${bigCheckin()}
+      ${maintenanceCard()}
       ${activitiesCard()}
+      ${deficitCard()}
+      ${routineCard()}
+      ${buddyCard()}
+      ${weeklyReportCard()}
+      ${catchUpCard()}
       ${weekEndCard()}
       ${loanCard()}
+      ${insightsCard()}
+      ${coachCard()}
       ${habitsCard()}
       ${homeScreen()}
       ${announcementsCard()}
-      ${coachCard()}
       ${stoicCard()}`;
   }
 
@@ -763,8 +908,8 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
     const items = r.foods.filter((f) => f.date === state.date);
     if (!items.length) return `<div class="empty">Nothing logged today yet.</div>`;
     const groups = [1, 2, 3, 0].map((n) => [n, items.filter((f) => (SLOT_OF[f.meal] || 0) === n).sort((a, b) => (a.time || "99").localeCompare(b.time || "99"))]).filter(([, x]) => x.length);
-    return groups.map(([n, x]) => `<div class="mealgroup"><div class="mghead"><b>${SLOT_NAME[n]}</b><span>${fmt(x.reduce((a, f) => a + f.kcal, 0))} kcal</span></div>
-      <div class="list">${x.map((f) => `<div class="item"><div class="grow"><div class="t">${NOT_ALLOWED[f.foodId] ? "⛔ " : ""}${esc(f.name)}</div><div class="s">${f.time ? `🕒 ${esc(f.time)}` : "no time"}${f.custom ? " · your estimate" : ""}</div></div><div class="k">${fmt(f.kcal)} kcal</div><button class="del" data-del="foods" data-id="${esc(f.id)}" aria-label="Delete">✕</button></div>`).join("")}</div></div>`).join("");
+    return groups.map(([n, x]) => `<details class="mealgroup"><summary class="mghead"><b>${SLOT_NAME[n]}</b><span>${x.length} item${x.length > 1 ? "s" : ""} · ${fmt(x.reduce((a, f) => a + f.kcal, 0))} kcal ▾</span></summary>
+      <div class="list">${x.map((f) => `<div class="item"><div class="grow"><div class="t">${NOT_ALLOWED[f.foodId] ? "⛔ " : ""}${esc(f.name)}</div><div class="s">${f.time ? `🕒 ${esc(f.time)}` : "no time"}${f.custom ? " · your estimate" : ""}</div></div><div class="k">${fmt(f.kcal)} kcal</div><button class="del" data-del="foods" data-id="${esc(f.id)}" aria-label="Delete">✕</button></div>`).join("")}</div></details>`).join("");
   }
   function exList(r) {
     const items = r.exercises.filter((x) => x.date === state.date);
@@ -784,9 +929,10 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
       <section class="card">
         <div class="row between wrap"><h2>${glassSvg(true, "sm")} Water</h2>${dateNav()}</div>
         <p class="center big-num">${g} <small>of ${wt} glasses</small></p>
+        <p class="center glassml">1 glass = <b>250 ml</b> · ${wt} glasses = <b>${fmt(wt * 0.25, 1)} litres</b> · you have had <b>${fmt(g * 250)} ml</b></p>
         <div class="glasses">${Array.from({ length: Math.max(wt, g) }, (_, i) => `<button class="glass ${i < g ? "full" : ""}" data-setwater="${i + 1 === g ? i : i + 1}" aria-label="${i + 1} glasses">${glassSvg(i < g)}</button>`).join("")}</div>
         <div class="row" style="justify-content:center;margin-top:12px"><button class="wbtn" data-water="-1" ${g ? "" : "disabled"}>−</button><button class="btn" data-water="1">+ 1 glass</button></div>
-        <p class="note center">${g >= wt ? `Goal reached! +${POINTS.water} points 🎉` : `Reach ${wt} glasses (about 2 litres) for +${POINTS.water} points. Tap a glass to set the number.`}</p>
+        <p class="note center">${g >= wt ? `Goal reached! +${POINTS.water} points 🎉` : `Reach ${wt} glasses (${fmt(wt * 250)} ml) for +${POINTS.water} points. Tap a glass to set the number.`}</p>
         <div class="minibars">${days.map((x) => { const v = glasses(r, x); return `<div><div class="mb" style="height:${Math.min(100, (v / wt) * 100)}%"></div><small>${fmtDate(x, { weekday: "narrow" })}</small></div>`; }).join("")}</div>
       </section>`;
   }
@@ -881,13 +1027,122 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
       <p class="note">The app flags these automatically when they are logged. Flags guide; they cost no points.</p>
     </details></section>`;
   }
-  const FOOD_GROUPS = ["Eating plan", "Protein", "Vegetables", "Fruit", "Starches", "Dairy", "Drinks", "Snacks", "Takeaways", "Extras", "Supplements", "Medicines"];
+  const PLAN_MEALS = (() => {
+    const out = [], seen = new Set();
+    for (const plan of Object.values(PLANS)) for (const n of [1, 2, 3]) for (const [label, items] of plan[n]) {
+      const key = n + ":" + label; if (seen.has(key)) continue; seen.add(key);
+      out.push({ id: "plan" + out.length, n, label, items, kcal: items.reduce((a, [fid, q]) => a + (FOOD_BY_ID[fid].unit ? Math.round((FOOD_BY_ID[fid].kcal * q) / 100) : FOOD_BY_ID[fid].kcal * q), 0) });
+    }
+    return out;
+  })();
+  // ⭐ My frequent foods: worked out from each person's own entries over time (foods, plan meals and own custom foods logged at least twice).
+  function frequentFoods(r) {
+    const tally = new Map(), seenPlan = new Set();
+    for (const f of r.foods) {
+      let key, item;
+      if (f.planLabel) { key = "pm:" + f.planLabel; const d = f.date + f.time + f.planLabel; if (seenPlan.has(d)) continue; seenPlan.add(d); const pm = PLAN_MEALS.find((m) => m.label === f.planLabel); if (!pm) continue; item = { type: "plan", id: pm.id, label: `${pm.label} (Meal ${pm.n})`, kcal: pm.kcal }; }
+      else if (f.foodId && FOOD_BY_ID[f.foodId]) { const x = FOOD_BY_ID[f.foodId]; key = "f:" + f.foodId + ":" + (f.amount || f.qty || 1); item = { type: "food", id: f.foodId, amount: f.amount, qty: f.qty, label: `${x.name}${f.amount ? ` (${f.amount} ${x.unit})` : f.qty && f.qty !== 1 ? ` × ${f.qty}` : ""}`, kcal: f.kcal }; }
+      else if (f.custom) { key = "c:" + f.name.toLowerCase() + ":" + f.kcal; item = { type: "custom", name: f.name, label: `${f.name} (your food)`, kcal: f.kcal }; }
+      else continue;
+      const t = tally.get(key) || { ...item, key, n: 0, last: "" }; t.n++; if (f.date > t.last) t.last = f.date; tally.set(key, t);
+    }
+    return [...tally.values()].filter((x) => x.n >= 2).sort((a, b) => b.n - a.n || b.last.localeCompare(a.last)).slice(0, 15);
+  }
+  function foodCats(r) {
+    const fav = frequentFoods(r), list = [];
+    if (fav.length) list.push(["frequent", "⭐", "My frequent foods", fav.length]);
+    list.push(["plan", "🍽️", "Plan meals", PLAN_MEALS.length]);
+    for (const [k, icon, name] of CATEGORIES) list.push([k, icon, name, FOODS.filter((f) => f.group === k && !f.hidden).length]);
+    if (!state.foodCat || !list.some((x) => x[0] === state.foodCat)) state.foodCat = fav.length ? "frequent" : "plan";
+    return list;
+  }
+  function catOptions(r, k) {
+    const opt = (v, t) => `<option value="${v}">${t}</option>`;
+    if (k === "frequent") return opt("", "Choose one of your usual foods…") + frequentFoods(r).map((x, i) => opt("fav" + i, `${esc(x.label)} · ${fmt(x.kcal)} kcal · ${x.n}×`)).join("");
+    if (k === "plan") return opt("", "Choose a plan meal…") + [1, 2, 3].map((n) => `<optgroup label="Meal ${n}">${PLAN_MEALS.filter((m) => m.n === n).map((m) => opt(m.id, `${esc(m.label)} · ${m.kcal} kcal`)).join("")}</optgroup>`).join("");
+    return opt("", "Choose a food…") + FOODS.filter((f) => f.group === k && !f.hidden).sort((a, b) => (!!NOT_ALLOWED[a.id] - !!NOT_ALLOWED[b.id]) || a.name.localeCompare(b.name)).map((f) => opt(f.id, `${NOT_ALLOWED[f.id] ? "⛔ " : ""}${esc(f.name)} · ${f.unit ? f.kcal + " kcal per 100 " + f.unit : f.serving + ", " + f.kcal + " kcal"}`)).join("");
+  }
+  // ---------- Food scanner ----------
+  // Runs on the phone: the photo never leaves the phone. A general food recogniser (MobileNet, trained on over a million
+  // labelled photos) suggests foods from the app's list, and the scanner learns each person's own meals: every time a
+  // scanned food is confirmed, its image features (numbers only) are saved with the chosen food, and later scans of
+  // similar plates suggest it first.
+  const SCAN_MAP = [
+    [/mashed potato/, ["pap", "mash", "softpap", "samp"]], [/french loaf|bagel|pretzel|dough|bakery/, ["brownbread", "whitebread", "roll", "wholewheat"]],
+    [/banana/, ["banana"]], [/orange/, ["orange", "naartjie"]], [/lemon/, ["lemon"]], [/granny smith|apple/, ["apple"]], [/strawberr/, ["strawberries"]], [/pineapple/, ["pineapple"]],
+    [/pomegranate|fig|custard apple/, ["p_fruit", "apple"]], [/broccoli/, ["p_broccoli"]], [/cauliflower/, ["cauliflower"]], [/head cabbage|cabbage/, ["p_cabbage", "kimchi"]],
+    [/cucumber/, ["p_cucumber", "gherkins"]], [/zucchini/, ["babymarrow"]], [/bell pepper/, ["greenpepper"]], [/mushroom|agaric|bolete/, ["mushrooms"]],
+    [/corn|ear\b/, ["mealie"]], [/squash/, ["butternut", "gemsquash"]], [/artichoke|cardoon/, ["p_veg"]], [/pizza/, ["pizza"]], [/cheeseburger/, ["cheeseburger", "burger"]],
+    [/hotdog|hot dog/, ["worsroll", "vienna"]], [/burrito/, ["wrap"]], [/meat loaf/, ["mince", "beefstew", "goulash"]], [/potpie/, ["pie"]], [/carbonara/, ["pasta", "spagbol"]],
+    [/consomme|hot pot|soup bowl/, ["beefstew", "chickenstew", "goulash"]], [/guacamole/, ["avocado"]], [/ice cream|ice lolly|trifle/, ["icecream"]], [/chocolate sauce/, ["chocslab"]],
+    [/espresso|cup|coffee mug/, ["coffeeblack", "rooibos", "greenteaplain"]], [/eggnog/, ["milkfull"]], [/red wine|wine bottle/, ["wine"]], [/beer/, ["beer"]],
+    [/pop bottle|water bottle|water jug/, ["sodawater", "spritezero"]], [/plate|tray|dining table|wok|frying pan/, []],
+  ];
+  let scanModel = null, scanMem = null;
+  const loadScript = (src) => new Promise((ok, no) => { if (document.querySelector(`script[src="${src}"]`)) return ok(); const el = document.createElement("script"); el.src = src; el.onload = ok; el.onerror = () => no(new Error("Could not load " + src)); document.head.appendChild(el); });
+  async function getScanner() {
+    if (window.__scanModel) return window.__scanModel; // test hook
+    if (scanModel) return scanModel;
+    await loadScript("/vendor/tf.min.js"); await loadScript("/vendor/mobilenet.min.js");
+    try { scanModel = await window.mobilenet.load({ version: 2, alpha: 1.0 }); } catch { scanModel = await window.mobilenet.load({ version: 1, alpha: 1.0 }); }
+    return scanModel;
+  }
+  const vecToB64 = (v) => { let n = 0; for (const x of v) n += x * x; n = Math.sqrt(n) || 1; const q = new Int8Array(v.length); v.forEach((x, i) => { q[i] = Math.max(-127, Math.min(127, Math.round((x / n) * 127 * 4))); }); let s = ""; q.forEach((b) => { s += String.fromCharCode(b & 255); }); return btoa(s); };
+  const b64ToVec = (b) => { const s = atob(b), v = new Float32Array(s.length); for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); v[i] = c > 127 ? c - 256 : c; } return v; };
+  const cosine = (a, b) => { let d = 0, x = 0, y = 0; for (let i = 0; i < Math.min(a.length, b.length); i++) { d += a[i] * b[i]; x += a[i] * a[i]; y += b[i] * b[i]; } return d / (Math.sqrt(x * y) || 1); };
+  async function scanImage(img) {
+    const m = await getScanner();
+    const [preds, emb] = await Promise.all([m.classify(img, 6), Promise.resolve(m.infer(img, true))]);
+    const vec = Array.from(await emb.data()); if (emb.dispose) emb.dispose();
+    if (!scanMem) { try { scanMem = (await api("scan/memory")).items.map((x) => ({ label: x.label, v: b64ToVec(x.vec) })); } catch { scanMem = []; } }
+    const q = b64ToVec(vecToB64(vec));
+    // Personal matches: the best score per food from this person's own confirmed scans.
+    const best = new Map(); for (const it of scanMem) { const k = it.label.type + ":" + (it.label.id || it.label.name); const sc = cosine(q, it.v); if (!best.has(k) || best.get(k).sc < sc) best.set(k, { sc, label: it.label }); }
+    const mine = [...best.values()].filter((x) => x.sc >= 0.72).sort((a, b) => b.sc - a.sc).slice(0, 3);
+    const general = []; for (const p of preds) for (const [re, ids] of SCAN_MAP) if (re.test(p.className.toLowerCase())) ids.forEach((id) => { if (FOOD_BY_ID[id] && !general.some((g) => g.id === id)) general.push({ id, why: p.className.split(",")[0], p: p.probability }); });
+    const mineIds = new Set(mine.filter((x) => x.label.type === "food").map((x) => x.label.id));
+    return { vec, mine, general: general.filter((g) => !mineIds.has(g.id)).slice(0, 5), seen: preds.slice(0, 3).map((p) => p.className.split(",")[0]) };
+  }
+  function scanModal() {
+    const m = modal(`<h2>📷 Scan my food</h2><p class="note" style="margin-top:0">Take a photo of your plate. The photo stays on your phone; only the food you choose is remembered, so the scanner learns your meals.</p>
+      <label class="btn full center" style="cursor:pointer">📸 Take or choose a photo<input type="file" id="scanFile" accept="image/*" capture="environment" hidden></label>
+      <div id="scanOut"></div><button class="btn ghost full" data-closescan style="margin-top:10px">Close</button>`);
+    $("[data-closescan]", m).addEventListener("click", closeModal);
+    $("#scanFile", m).addEventListener("change", async (e) => {
+      const f = e.target.files[0]; if (!f) return; const out = $("#scanOut", m);
+      const url = URL.createObjectURL(f); out.innerHTML = `<img src="${url}" class="scanimg" alt=""><p class="note">🔎 Looking at your food… (the first scan downloads the recogniser, about 15 MB, once)</p>`;
+      const img = $(".scanimg", out); await new Promise((ok) => { if (img.complete) ok(); else img.onload = ok; });
+      try {
+        const res = await scanImage(img); state.scanVec = res.vec;
+        const btn = (label, sub, data) => `<button class="planbtn" ${data}><span>${label}</span><small>${sub}</small></button>`;
+        const mineHtml = res.mine.map((x) => { const l = x.label; const name = l.type === "food" ? FOOD_BY_ID[l.id]?.name || l.name : l.name; return btn(`⭐ ${esc(name)}`, `you logged this before · ${Math.round(x.sc * 100)}% match`, `data-scanpick='${esc(JSON.stringify(l))}'`); }).join("");
+        const genHtml = res.general.map((g) => btn(esc(FOOD_BY_ID[g.id].name), `looks like ${esc(g.why)}`, `data-scanpick='${esc(JSON.stringify({ type: "food", id: g.id, name: FOOD_BY_ID[g.id].name }))}'`)).join("");
+        out.innerHTML = `<img src="${url}" class="scanimg" alt="">${mineHtml || genHtml ? `<p><b>Is it one of these?</b></p><div class="planopts scanopts">${mineHtml}${genHtml}</div>` : `<p class="note">I could not recognise this yet${res.seen.length ? ` (it looks like: ${esc(res.seen.join(", "))})` : ""}.</p>`}
+          <p class="note">Not listed? Close this and choose the food from a category or search: I will remember it for your next scan of this meal.</p>`;
+        $$("[data-scanpick]", out).forEach((b) => b.addEventListener("click", () => { closeModal(); applyScanPick(JSON.parse(b.dataset.scanpick)); }));
+      } catch (err) { out.innerHTML = `<p class="note">⚠️ The scanner needs an internet connection the first time it is used. ${esc(err.message || "")}</p>`; }
+    });
+  }
+  function applyScanPick(l) {
+    const sel = $("#fpicklist");
+    if (l.type === "plan") { state.foodCat = "plan"; render(); const s2 = $("#fpicklist"); s2.value = l.id; s2.dispatchEvent(new Event("change")); }
+    else if (l.type === "custom") { $("#fcustom").classList.remove("hidden"); $("#fname").value = l.name; $("#fkcal").value = l.kcal; $("#fadd").disabled = false; }
+    else { const f = FOOD_BY_ID[l.id]; if (!f) return; state.foodCat = f.group; render(); const s2 = $("#fpicklist"); s2.value = f.id; s2.dispatchEvent(new Event("change")); if (l.amount && $("#famt")) { $("#famt").value = l.amount; $("#famt").dispatchEvent(new Event("input")); } }
+    state.scanVec = state.scanVec || null; $("#fadd").scrollIntoView({ behavior: "smooth", block: "center" });
+    if (sel) toast("Check the amount and tap Add. The scanner will remember this meal.");
+  }
+  // After a scanned food is added, remember it for this person.
+  async function learnScan(label) {
+    const v = state.scanVec; if (!v) return; state.scanVec = null;
+    try { await api("scan/learn", { method: "POST", body: { label, vec: vecToB64(v) } }); if (scanMem) scanMem.push({ label, v: b64ToVec(vecToB64(v)) }); } catch {}
+  }
+  const FOOD_GROUPS = ["Protein", "Vegetables", "Fruit", "Starches", "Dairy", "Drinks", "Snacks", "Takeaways", "Extras", "Supplements", "Medicines"];
   function flagBanner(r) {
     const f = eating(r, state.date).flags; if (!f.length) return "";
     return `<div class="flagbox">${f.map((x) => `<div>🚩 <b>${esc(x.label)}</b><br><small>${esc(x.how)}</small></div>`).join("")}</div>`;
   }
   const SLOT_OF = { Breakfast: 1, "Meal 1": 1, Lunch: 2, "Meal 2": 2, Dinner: 3, "Meal 3": 3 };
-  const SLOT_NAME = { 1: "Breakfast · Meal 1", 2: "Lunch · Meal 2", 3: "Dinner · Meal 3", 0: "Snacks, drinks and medicines" };
+  const SLOT_NAME = { 1: "🌅 Breakfast", 2: "☀️ Lunch", 3: "🌙 Dinner", 0: "🍎 Snacks, drinks and medicines" };
   function mealsStrip(r) {
     const items = r.foods.filter((f) => f.date === state.date), ea = eating(r, state.date);
     const slot = (n) => items.filter((f) => (SLOT_OF[f.meal] || 0) === n);
@@ -904,7 +1159,6 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
         ${mealsStrip(r)}
         ${flagBanner(r)}
       </section>
-      ${planCard(r)}
       <section class="card">
         <h2>➕ Add food</h2>
         <form class="form" id="foodForm" autocomplete="off">
@@ -912,7 +1166,10 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
           <div class="seg mealseg">${["Breakfast", "Lunch", "Dinner", "Snack"].map((m) => `<button type="button" class="${m === meal ? "on" : ""}" data-meal="${m}">${{ Breakfast: "🌅", Lunch: "☀️", Dinner: "🌙", Snack: "🍎" }[m]} ${m}</button>`).join("")}</div>
           <input type="hidden" id="meal" value="${meal}">
           <label>2. Time eaten<input type="time" id="ftime" value="${nowHM()}" max="${nowHM()}" required></label>
-          <label>3. Choose the food<select id="fpicklist"><option value="">Choose from the list…</option>${FOOD_GROUPS.map((g) => { const list = FOODS.filter((f) => f.cat === g).sort((a, b) => a.name.localeCompare(b.name)); return list.length ? `<optgroup label="${g}">${list.map((f) => `<option value="${f.id}">${NOT_ALLOWED[f.id] ? "⛔ " : ""}${esc(f.name.replace(/ \(plan[^)]*\)/, ""))} · ${f.unit ? f.kcal + " kcal per 100 " + f.unit : f.serving + ", " + f.kcal + " kcal"}</option>`).join("")}</optgroup>` : ""; }).join("")}</select></label>
+          <button type="button" class="btn ghost full scanbtn" data-scan>📷 Scan my food: the app suggests what it is</button>
+          <label>3. Pick a category</label>
+          <div class="catgrid">${foodCats(r).map(([k, icon, name, n]) => `<button type="button" class="catbtn ${k === state.foodCat ? "on" : ""}" data-fcat="${k}"><span>${icon}</span><b>${esc(name)}</b><small>${n}</small></button>`).join("")}</div>
+          <label>4. Choose the food<select id="fpicklist">${catOptions(r, state.foodCat)}</select></label>
           <label class="sub">or type to search<input id="fsearch" placeholder="e.g. chicken, apple, Provita" maxlength="80"></label>
           <div id="fresults" class="fresults"></div>
           <div id="fpicked" class="fpicked hidden"></div>
@@ -925,6 +1182,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
         <h2>📋 What I ate today</h2>
         ${foodList(r)}
       </section>
+      <button class="btn ghost full" data-go="recipes" style="margin-bottom:12px">🥗 Recipes that follow the plan</button>
       ${rulesCard()}`;
   }
   function guessMeal() { const h = saHour(); return h < 11 ? "Breakfast" : h < 15 ? "Lunch" : h < 21 ? "Dinner" : "Snack"; }
@@ -950,7 +1208,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
           <label>Activity<select id="act">${ACT_GROUPS.map((g) => `<optgroup label="${g === "Distance" ? "Distance (5 km, 10 km, 20 km, 30 km…)" : g}">${ACTIVITIES.map((x, i) => x[4] === g ? `<option value="${i}">${esc(x[0])}</option>` : "").join("")}</optgroup>`).join("")}<option value="custom">Other (enter calories)</option></select></label>
           <div class="grid2" id="floorsWrap" style="display:none">
             <label>Up to floor<input id="floors" type="number" inputmode="numeric" min="1" max="100" value="15"></label>
-            <label>How many times<input id="rounds" type="number" inputmode="numeric" min="1" max="50" value="1"></label>
+            <label>How many times?<input id="rounds" type="number" inputmode="numeric" min="1" max="50" value="1"></label>
           </div>
           <label id="customWrap" style="display:none">Activity name<input id="actName" maxlength="80"></label>
           <div class="grid2">
@@ -989,7 +1247,8 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
     return `<div class="dots">${score(id).days14.map((x) => `<span class="dot ${x.c === "today" ? "" : x.c}" title="${shortDate(x.d)}: ${labels[x.c]}"></span>`).join("")}</div>`;
   }
 
-  function viewBoard() {
+  function viewBoard() { return viewBoardInner() + cheerCard(); }
+  function viewBoardInner() {
     if (isSealed() && state.boardMode === "overall") state.boardMode = "week";
     const s = settings(), cd = challengeDay(), mode = state.boardMode, list = ranking(mode), overall = ranking("overall");
     const blId = R().biggestLoser, bl = blId ? score(blId) : null, leader = overall[0];
@@ -1088,11 +1347,61 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
           <option value="start">Starting weights (14 Nov 2026)</option>
           ${weighDays().map((d) => `<option value="${d}" ${d === lastWeighDay(today) ? "selected" : ""} ${d > today ? "disabled" : ""}>${fmtDate(d, { weekday: "short", day: "numeric", month: "short" })}${d > today ? " (upcoming)" : ""}</option>`).join("")}
         </select></label>
-        <div class="grid2">${MEMBERS.map((m) => `<label>${esc(nameOf(m.id))} (kg)<input type="text" inputmode="decimal" autocomplete="off" step="0.1" min="20" max="400" data-gw="${m.id}"></label>`).join("")}</div>
+        <div class="gwlist">${MEMBERS.map((m) => `<div class="gwrow"><b>${esc(nameOf(m.id))}</b><label>kg<input type="text" inputmode="decimal" autocomplete="off" data-gw="${m.id}"></label><label>waist cm<input type="text" inputmode="decimal" autocomplete="off" data-gwaist="${m.id}"></label><label>hips cm<input type="text" inputmode="decimal" autocomplete="off" data-ghip="${m.id}"></label></div>`).join("")}</div>
         <button class="btn full">Save weights</button>
         <p class="note" style="margin:0">Leave a box empty to skip someone. Saving again for the same date replaces the earlier weight.</p>
       </form>
-    </section>`;
+    </section>
+    ${weighDayResults()}`;
+  }
+
+  // Weigh in day mode: results for the chosen weigh in, awards presented, and a summary to share (no kilograms in the shared text).
+  function weighDayResults() {
+    const t = todayStr(), d = state.weighShow && state.weighShow !== "start" ? state.weighShow : lastWeighDay(t); if (!d) return "";
+    const rows = MEMBERS.map((m) => { const r = rec(m.id), cur = r.weights.find((x) => x.verified && x.date === d); if (!cur) return null; const res = weighResult(r, d), sw = startWeight(r); return { m, r, cur, res, pct: sw ? ((sw - cur.kg) / sw) * 100 : null }; }).filter(Boolean);
+    if (!rows.length) return "";
+    const wk = R().weeks.filter((w) => w.done && w.presentOn === d), mo = R().months.filter((x) => x.done && x.presentOn === d);
+    const name = (id) => nameOf(id).split(" ")[0];
+    const lines = [`⚖️ Stoic by Choice · weigh in ${fmtDate(d, { weekday: "long", day: "numeric", month: "long" })}`, "",
+      ...rows.map((x) => `${name(x.m.id)}: ${x.res ? (x.res.lost < 0 ? "📈 gained" : x.res.lost === 0 ? "➖ no change" : x.res.pts > 3 ? "🏅 minimum met" : "📉 lost") + ` (${x.res.pts > 0 ? "+" : ""}${x.res.pts} + 10 pts)` : "✅ weighed in (+10 pts)"}${x.pct !== null ? ` · ${x.pct.toFixed(1).replace(".", ",")}% since start` : ""}`),
+      ...(wk.length || mo.length ? ["", "🏆 Awards presented today:", ...wk.map((w) => `Week ${w.n}: ${w.winners.map(name).join(" & ") || "–"}`), ...mo.map((x) => `${x.label.split(" ·")[0]}: ${x.winners.map(name).join(" & ") || "–"}`)] : []),
+      "", "Keep going, team. 💪🏾"];
+    state.weighSummary = lines.join("\n");
+    return `<section class="card printable"><h2>📋 Weigh in results · ${fmtDate(d, { weekday: "short", day: "numeric", month: "short" })}</h2>
+      <div style="overflow-x:auto"><table class="records"><tr><th>Name</th><th>Before</th><th>Now</th><th>Change</th><th>Result</th><th>% since start</th><th>Waist</th></tr>
+      ${rows.map((x) => { const prev = x.r.weights.filter((w) => w.verified && w.date < d).sort((a, b) => a.date.localeCompare(b.date)).pop(); const ch = prev ? x.cur.kg - prev.kg : null; const ms = (x.r.measures || []).find((m) => m.date === d);
+        return `<tr><td><b>${esc(nameOf(x.m.id))}</b></td><td>${prev ? fmt(prev.kg, 1) : "–"}</td><td><b>${fmt(x.cur.kg, 1)}</b></td><td style="color:${ch === null ? "inherit" : ch <= 0 ? "var(--leaf)" : "var(--danger)"}">${ch === null ? "–" : (ch > 0 ? "▲ " : "▼ ") + fmt(Math.abs(ch), 1)}</td><td>${x.res ? `${x.res.pts > 0 ? "+" : ""}${x.res.pts}` : "–"} <small class="muted">+10</small></td><td>${x.pct !== null ? fmt(x.pct, 1) + "%" : "–"}</td><td>${ms && ms.waistCm ? fmt(ms.waistCm, 1) : "–"}</td></tr>`; }).join("")}
+      </table></div>
+      ${wk.length || mo.length ? `<p><b>🏆 Presented today:</b> ${[...wk.map((w) => `Week ${w.n}: ${winnerChips(w.winners)}`), ...mo.map((x) => `${esc(x.label.split(" ·")[0])}: ${winnerChips(x.winners)}`)].join(" · ")}</p>` : `<p class="note">No awards are due at this weigh in.</p>`}
+      <div class="grid2 noprint"><button class="btn" data-wsum>📋 Copy WhatsApp summary</button><button class="btn ghost" data-print>🖨️ Print</button></div>
+      <p class="note">The WhatsApp summary shares results, points and percentages only, never anyone's kilograms.</p></section>`;
+  }
+
+  // Participant details (admin): everything about each person in one place.
+  function admProfiles() {
+    const buddies = (state.config && state.config.buddies) || {};
+    return `<section class="card"><h2>📝 Participant details</h2><p class="note" style="margin-top:0">Private health information. Tap a name to view or edit. Participants can also edit their own profile.</p></section>
+      ${MEMBERS.map((m) => { const r = rec(m.id), p = r.profile, ms = lastMeasure(r), b = bmi(r, latestWeight(r));
+        return `<details class="card fold"><summary>${avatar(m.id, "sm")} <b>${esc(nameOf(m.id))}</b> <small class="muted">${p.age ? p.age + " yrs" : p.junior ? "under 18" : "age not set"}${isMinor(r) ? " · Junior plan" : ""}${b ? " · BMI " + fmt(b.value, 1) : ""}</small></summary>
+          <form class="form" data-profform="${m.id}">
+            <div class="grid2">
+              <label>Age<input name="age" type="number" inputmode="numeric" value="${p.age ?? ""}"></label>
+              <label>Sex<select name="sex"><option value="f" ${p.sex !== "m" ? "selected" : ""}>Female</option><option value="m" ${p.sex === "m" ? "selected" : ""}>Male</option></select></label>
+              <label>Height (cm)<input name="heightCm" type="text" inputmode="numeric" data-int value="${p.heightCm ?? ""}"></label>
+              <label>Goal weight (kg)<input name="goalWeight" type="text" inputmode="decimal" value="${p.goalWeight ?? ""}"></label>
+              <label>Starting weight (kg)<input name="startWeight" type="text" inputmode="decimal" value="${p.startWeight ?? ""}"></label>
+              <label>Nov 2024 weight (kg)<input name="beforeWeight" type="text" inputmode="decimal" value="${p.beforeWeight ?? ""}"></label>
+              <label>Waist today (cm)<input name="waistCm" type="text" inputmode="decimal" placeholder="${ms && ms.waistCm ? "last " + fmt(ms.waistCm, 1) : ""}"></label>
+              <label>Hips today (cm)<input name="hipCm" type="text" inputmode="decimal" placeholder="${ms && ms.hipCm ? "last " + fmt(ms.hipCm, 1) : ""}"></label>
+            </div>
+            <label class="check"><input type="checkbox" name="junior" ${p.junior ? "checked" : ""}> Under 18 (Junior plan), use when the age is not known</label>
+            ${ABOUT_FIELDS.map(([k, l]) => `<label>${l}<textarea name="${k}" maxlength="200" rows="2">${esc(p[k] || "")}</textarea></label>`).join("")}
+            <label>🔒 Admin notes (only you see these)<textarea name="adminNote" maxlength="500" rows="2">${esc(p.adminNote || "")}</textarea></label>
+            <button class="btn full">Save ${esc(nameOf(m.id).split(" ")[0])}'s details</button>
+          </form></details>`; }).join("")}
+      <section class="card"><h2>🤝🏾 Buddy pairs</h2><p class="note" style="margin-top:0">Each person sees whether their buddy has checked in and can cheer them. Pairing a parent with a teenager works well.</p>
+        <form class="form" id="buddyForm">${MEMBERS.map((m) => `<label>${esc(nameOf(m.id))}<select data-bud="${m.id}"><option value="">No buddy</option>${MEMBERS.filter((x) => x.id !== m.id).map((x) => `<option value="${x.id}" ${buddies[m.id] === x.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label>`).join("")}
+          <button class="btn full">Save buddy pairs</button><p class="note">Pairs work both ways: choosing Thandi for Benadette also gives Benadette to Thandi.</p></form></section>`;
   }
 
   function holidayCard() {
@@ -1271,6 +1580,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
         ${sc.goal !== null ? `<div style="margin-top:12px"><small>${fmt(sc.goal)}% of the way to ${fmt(p.goalWeight, 1)} kg</small><div class="bar"><i style="width:${sc.goal}%"></i></div></div>` : ""}
       </section>
 
+      ${weighResultsCard(r)}
       ${bmiCard(r)}
 
       ${chartsCard()}
@@ -1288,22 +1598,160 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
         <div class="list">${sortByDate(r.weights).reverse().slice(0, 3).map((x) => `<div class="item"><div class="grow"><div class="t">${fmt(x.kg, 1)} kg</div><div class="s">${fmtDate(x.date, { weekday: "short", day: "numeric", month: "short" })}</div></div><button class="del" data-del="weights" data-id="${esc(x.id)}" aria-label="Delete">✕</button></div>`).join("")}</div>
       </section>
 
-      <details class="card fold"><summary>⚙️ My profile and settings</summary>
+      ${measuresCard(r)}
+      ${remindersCard()}
+      ${stepSyncCard()}
+      <section class="card"><div class="form">
+        <button class="btn full" data-go="profile">👤 Edit my profile (age, height, waist, favourites, goals)</button>
+        <button class="btn ghost full" data-go="calc">🧮 Open the burn calculator</button>
+        <button class="btn ghost full" data-act="switch">🎭 Avatar, PIN and sign out</button></div></section>`;
+  }
+
+  // ---------- My profile page ----------
+  const ABOUT_FIELDS = [["favFoods", "🍲 Favourite foods", "e.g. grilled chicken, pawpaw, rooibos"], ["favExercise", "🏃🏾 Favourite exercise", "e.g. walking, stairs, spinning, dancing"],
+    ["biggestChallenge", "🧗🏾 My biggest challenge", "e.g. late night snacking, no time to exercise"], ["motivation", "💡 Why I am doing this", "e.g. for my health and my children"], ["support", "🤝🏾 What helps me most", "e.g. reminders, a walking buddy"]];
+  function viewProfile() {
+    const r = rec(state.me), p = r.profile, sc = score(state.me), m = lastMeasure(r);
+    return `<section class="card"><h2>👤 My profile</h2><p class="note" style="margin-top:0">Private: only you and the administrator see this. Your coach uses it to personalise your advice.</p>
         <form class="form" id="pForm">
+          <h3>About me</h3>
           <div class="grid2">
             <label>Sex<select id="pSex"><option value="f" ${p.sex !== "m" ? "selected" : ""}>Female</option><option value="m" ${p.sex === "m" ? "selected" : ""}>Male</option></select></label>
             <label>Age<input id="pAge" type="number" inputmode="numeric" min="5" max="110" value="${p.age ?? ""}"></label>
             <label>Height (cm)<input id="pH" type="number" inputmode="numeric" min="90" max="230" value="${p.heightCm ?? ""}"></label>
-            <label>Starting weight (kg)<input id="pSW" type="text" inputmode="decimal" autocomplete="off" step="0.1" value="${p.startWeight ?? (sc.sw ?? "")}" ${p.startWeight ? 'readonly title="Only the administrator can change a starting weight"' : ""}></label>
-            <label>Goal weight (kg)<input id="pGW" type="text" inputmode="decimal" autocomplete="off" step="0.1" value="${p.goalWeight ?? ""}"></label>
+            <label>Goal weight (kg)<input id="pGW" type="text" inputmode="decimal" autocomplete="off" value="${p.goalWeight ?? ""}"></label>
+            <label>Waist today (cm)<input id="pWaist" type="text" inputmode="decimal" autocomplete="off" placeholder="${m && m.waistCm ? "last " + fmt(m.waistCm, 1) : "e.g. 92"}"></label>
+            <label>Hips today (cm)<input id="pHip" type="text" inputmode="decimal" autocomplete="off" placeholder="${m && m.hipCm ? "last " + fmt(m.hipCm, 1) : "e.g. 104"}"></label>
+            <label>Starting weight (kg)<input id="pSW" type="text" inputmode="decimal" autocomplete="off" value="${p.startWeight ?? (sc.sw ?? "")}" ${p.startWeight ? 'readonly title="Only the administrator can change a starting weight"' : ""}></label>
           </div>
           <label>Activity level<select id="pAct">${[[1.2, "Mostly sitting"], [1.375, "Lightly active (1 to 3 days)"], [1.55, "Moderately active (3 to 5 days)"], [1.725, "Very active (6 to 7 days)"]].map(([v, l]) => `<option value="${v}" ${Number(p.activity || 1.375) === v ? "selected" : ""}>${l}</option>`).join("")}</select></label>
           ${rateField(r)}
-          <button class="btn full">Save profile</button>
-        </form>
-        <button class="btn ghost full" style="margin-top:10px" data-go="calc">🧮 Open the burn calculator</button>
-        <button class="btn ghost full" style="margin-top:10px" data-act="switch">🎭 Avatar, PIN and sign out</button>
-      </details>`;
+          <h3>My favourites and goals</h3>
+          ${ABOUT_FIELDS.map(([k, l, ph]) => `<label>${l}<textarea id="ab_${k}" maxlength="200" rows="2" placeholder="${ph}">${esc(p[k] || "")}</textarea></label>`).join("")}
+          <button class="btn full">Save my profile</button>
+        </form></section>`;
+  }
+
+  // ---------- Waist and hip measurements ----------
+  const lastMeasure = (r) => (r.measures || []).slice().sort((a, b) => a.date.localeCompare(b.date)).pop() || null;
+  function whtr(r, waist) { const h = r.profile.heightCm; if (!h || !waist) return null; const v = Math.round((waist / h) * 100) / 100; return { v, label: v < 0.4 ? "below the healthy range" : v < 0.5 ? "healthy" : v < 0.6 ? "increased health risk" : "high health risk" }; }
+  function measuresCard(r) {
+    const list = (r.measures || []).slice().sort((a, b) => a.date.localeCompare(b.date)), last = list[list.length - 1], first = list[0];
+    const w = last && last.waistCm ? whtr(r, last.waistCm) : null;
+    return `<section class="card"><h2>📏 Waist and hips</h2>
+      ${last ? `<div class="row between"><div><small class="muted">Latest (${fmtDate(last.date, { day: "numeric", month: "short" })})</small><div class="cbig" style="font-size:1.6rem">${last.waistCm ? fmt(last.waistCm, 1) + " cm" : "–"}<small> waist</small></div>${last.hipCm ? `<small>${fmt(last.hipCm, 1)} cm hips</small>` : ""}</div>
+        <div style="text-align:right">${first && first !== last && first.waistCm && last.waistCm ? `<b style="color:${last.waistCm <= first.waistCm ? "#8BD66B" : "#FF7A63"}">${last.waistCm <= first.waistCm ? "▼" : "▲"} ${fmt(Math.abs(first.waistCm - last.waistCm), 1)} cm</b><br><small>since ${fmtDate(first.date, { day: "numeric", month: "short" })}</small>` : ""}</div></div>
+        ${w ? `<p class="note">Waist to height ratio <b>${String(w.v).replace(".", ",")}</b>: ${w.label}. Keep your waist to less than half your height (NICE guidance).</p>` : `<p class="note">Add your height in your profile to see your waist to height ratio.</p>`}
+        ${list.length > 1 ? barChart({ days: list.map((x) => x.date), values: list.map((x) => x.waistCm || 0), color: "#5AA9E6", label: "cm", short: true }) : ""}`
+      : `<p class="note">No measurements yet. Measure your waist at the level of your belly button and add it in your profile, or at the official weigh in.</p>`}
+      <p class="note">The tape often shows progress when the scale does not.</p></section>`;
+  }
+
+  // ---------- Reminders (phone notifications) ----------
+  const PUSH_LABELS = { vitamin: "💊 Take your Centrum (08:30, if not ticked)", meditate: "🧘🏾 5 minute meditation (12:30)", journal: "✍🏾 Quick journal write up (21:00)", meals: "🍽️ Meal reminders (08:00, 13:00, 18:30, only if not logged)", water: "🥛 Water reminders (10:30, 14:30, 17:30, if behind)", night: "🕘 Last meal before 9 PM (20:15)", nudge: "👋🏾 Nothing logged today (20:00)", weighin: "⚖️ Weigh in tomorrow (Friday evening)", alerts: "🛡️ Safety alerts for the administrator (08:00)" };
+  function remindersCard() {
+    const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+    const on = state.push && state.push.enabled, prefs = (state.push && state.push.prefs) || {};
+    const ios = isIOS(), installed = isStandalone();
+    return `<section class="card"><h2>🔔 Reminders</h2>
+      ${!supported || (ios && !installed) ? `<p class="note">${ios ? "On iPhone, reminders work once the app is saved to your home screen (Share ⬆️ → Add to Home Screen). Then open it from the icon and come back here." : "This browser cannot show reminders. Try Chrome."}</p>`
+      : on ? `<p class="note" style="margin-top:0">✅ Reminders are on for this phone.</p>
+          <div class="pushprefs">${Object.entries(PUSH_LABELS).filter(([k]) => k !== "alerts" || state.account.role === "admin").map(([k, l]) => `<label class="check"><input type="checkbox" data-pp="${k}" ${prefs[k] !== false ? "checked" : ""}> ${l}</label>`).join("")}</div>
+          <div class="grid2"><button class="btn ghost" data-push="test">Send a test</button><button class="btn ghost" data-push="off">Turn off</button></div>`
+      : `<p class="note" style="margin-top:0">Gentle reminders for meals, water, the 9 PM cut off and weigh ins. Only when something is still to do.</p><button class="btn full" data-push="on">🔔 Turn on reminders</button>`}
+    </section>`;
+  }
+  async function pushOn() {
+    try {
+      const perm = await Notification.requestPermission(); if (perm !== "granted") return toast("Reminders were not allowed. You can allow them in your phone settings.");
+      const reg = await navigator.serviceWorker.ready, { publicKey } = await api("push/key");
+      const key = Uint8Array.from(atob(publicKey.replace(/-/g, "+").replace(/_/g, "/") + "=".repeat((4 - (publicKey.length % 4)) % 4)), (c) => c.charCodeAt(0));
+      const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }));
+      await api("push/subscribe", { method: "POST", body: { subscription: sub.toJSON() } });
+      await load(); render(); toast("🔔 Reminders are on.");
+    } catch (e) { toast("⚠️ Reminders could not be turned on: " + esc(e.message || "")); }
+  }
+
+  // ---------- iPhone step sync ----------
+  function stepSyncCard() {
+    const code = state.newSyncCode;
+    return `<section class="card"><details class="fold" ${state.newSyncCode ? "open" : ""}><summary>👟 Step sync from iPhone Health (optional)</summary>
+      <p class="note">An Apple Shortcut can send today's steps from the Health app (and any watch connected to it) to the challenge every evening.</p>
+      ${code ? `<p>Your personal code (shown once, keep it private):</p><p class="synccode">${esc(code)}</p>` : `<button class="btn ghost full" data-sync>${state.syncCodeSet ? "Make a new code (the old one stops working)" : "Make my step sync code"}</button>`}
+      <ol class="rules">
+        <li>Open the <b>Shortcuts</b> app → <b>+</b>.</li>
+        <li>Add <b>Find Health Samples</b>: type <b>Steps</b>, start date <b>is today</b>.</li>
+        <li>Add <b>Calculate Statistics</b>: <b>Sum</b> of the Health Samples.</li>
+        <li>Add <b>Get Contents of URL</b>: <code>${location.origin}/api/steps-sync</code>, method <b>POST</b>, request body <b>JSON</b> with <b>code</b> = your code and <b>steps</b> = the Sum.</li>
+        <li>In <b>Automation</b>, run it every day at <b>20:30</b> and choose <b>Run Immediately</b>.</li>
+      </ol></details></section>`;
+  }
+
+  // ---------- Buddies and cheers ----------
+  function buddyCard() {
+    const b = state.buddy, rc = state.cheers.received;
+    if (!b && !rc.length) return "";
+    return `<section class="card buddy">
+      ${rc.length ? `<div class="cheerin">${rc.map((c) => `${c.emoji} <b>${esc(c.from.split(" ")[0])}</b> cheered you on today!`).join("<br>")}</div>` : ""}
+      ${b ? `<div class="row between"><div class="row" style="gap:10px">${avatar(b.id, "md")}<div><small class="muted">🤝🏾 My buddy</small><br><b>${esc(b.name)}</b><br><small>${b.checkedIn ? `✅ Checked in today · ${b.points} pts` : "⏳ Not checked in yet"}</small></div></div>
+        ${state.cheers.sent.includes(b.id) ? `<span class="pill good">Cheered ✓</span>` : `<button class="btn" data-cheer="${b.id}">👏🏾 Cheer</button>`}</div>` : ""}
+    </section>`;
+  }
+  function cheerCard() {
+    const others = MEMBERS.filter((m) => m.id !== state.me);
+    if (!others.length) return "";
+    return `<section class="card"><h2>👏🏾 Send a cheer</h2><p class="note" style="margin-top:0">One cheer per person a day. Encouragement works.</p>
+      <div class="chips">${others.map((m) => state.cheers.sent.includes(m.id) ? `<span class="chip on">✓ ${esc(m.name.split(" ")[0])}</span>` : `<button class="chip" data-cheer="${m.id}">👏🏾 ${esc(m.name.split(" ")[0])}</button>`).join("")}</div></section>`;
+  }
+
+  // ---------- Weekly report (Tuesday) ----------
+  function weeklyReportCard() {
+    const t = todayStr(), w = currentWeek(); if (t !== w.w0) return "";
+    const prev = challengeWeeks().find((x) => x.n === w.n - 1); if (!prev) return "";
+    const r = rec(state.me), L = ledger(r, prev.w0, prev.w1), pts = (score(state.me).weekPts || {})[prev.n] || 0;
+    const days = []; for (let d = prev.w0; d <= prev.w1; d = addDays(d, 1)) days.push(d);
+    const rate = (k) => days.filter((d) => habitsOn(r, d)[k]).length;
+    const flags = days.reduce((a, d) => a + eating(r, d).flags.length, 0);
+    const text = `Stoic by Choice · my Week ${prev.n} report\n⭐ ${pts} points\n🍽️ 3 meals: ${rate("food")}/7 days\n👟 Move: ${L.move.done} active minutes\n🥛 Water goal: ${rate("water")}/7 days\n🌙 Sleep goal: ${rate("sleep")}/7 nights\n🚩 Bad habits: ${flags}\nThis week I will focus on: ${HABIT_META[HABIT_KEYS.slice().sort((a, b) => rate(a) - rate(b))[0]][1]}`;
+    state.reportText = text;
+    return `<section class="card report"><h2>📄 My Week ${prev.n} in one page</h2>
+      <div class="kdgrid">
+        <div class="kd"><span class="kdi">⭐</span><div class="grow"><small>Points</small><b>${fmt(pts)}</b></div></div>
+        <div class="kd"><span class="kdi">🍽️</span><div class="grow"><small>3 meals</small><b>${rate("food")} of 7 days</b></div></div>
+        <div class="kd"><span class="kdi">👟</span><div class="grow"><small>Active minutes</small><b>${fmt(L.move.done)}</b><span>target ${L.move.need}</span></div></div>
+        <div class="kd"><span class="kdi">🥛</span><div class="grow"><small>Water goal</small><b>${rate("water")} of 7 days</b></div></div>
+        <div class="kd"><span class="kdi">🌙</span><div class="grow"><small>Sleep goal</small><b>${rate("sleep")} of 7 nights</b></div></div>
+        <div class="kd"><span class="kdi">🚩</span><div class="grow"><small>Bad habits</small><b>${flags}</b></div></div>
+      </div>
+      <p class="note">Focus this week: <b>${HABIT_META[HABIT_KEYS.slice().sort((a, b) => rate(a) - rate(b))[0]][1]}</b>.</p>
+      <button class="btn ghost full" data-share>📤 Share my report</button></section>`;
+  }
+
+  // ---------- Maintenance mode (after the Grand Finale) ----------
+  function maintenanceCard() {
+    const s = settings(), t = todayStr(); if (t <= s.end) return "";
+    const r = rec(state.me), base = officialWeightOn(r, s.end) || latestWeight(r), cur = latestWeight(r); if (!base) return "";
+    const lo = Math.round((base - 1) * 10) / 10, hi = Math.round((base + 2) * 10) / 10, inRange = cur >= lo - 0.05 && cur <= hi + 0.05;
+    return `<section class="card maint"><h2>🛡️ Maintenance: keep it off</h2>
+      <p>The challenge is over. Now the most important part: keeping your results. Your range is <b>${fmt(lo, 1)} to ${fmt(hi, 1)} kg</b>.</p>
+      <div class="cuhead ${inRange ? "done" : ""}"><b>${inRange ? "✓ You are in your range" : cur > hi ? "Above your range: tighten portions and move more this week" : "Below your range"}</b><small>Latest weight ${fmt(cur, 1)} kg. Weigh yourself once a month (Progress, personal weigh in).</small></div>
+      <ul class="pglist"><li>Keep 3 meals a day and keep logging most days.</li><li>Stay active: 150 minutes a week or more.</li><li>8 glasses of water and 7 hours of sleep.</li><li>Your clinic's maintenance programme and follow up blood tests matter more than the diet itself.</li></ul></section>`;
+  }
+
+  // ---------- Recipes that follow the plan rules ----------
+  const RECIPES = [
+    ["🍗 Lemon herb chicken with greens", "Meal 2 or 3", ["Chicken breast (weighed raw, your plan amount)", "Your plan vegetables: baby marrow, green beans or broccoli (a third at most)", "Lemon, garlic, rosemary, black pepper", "Spray and Cook"], "Rub the chicken with lemon, garlic, rosemary and pepper. Grill or pan fry with Spray and Cook until cooked through. Steam the vegetables and season with lemon and herbs."],
+    ["🐟 Hake parcel", "Meal 2 or 3", ["Hake (weighed raw)", "Mushrooms, baby marrow and onion (30 g at most)", "Parsley, garlic, lemon, black pepper"], "Place the fish and sliced vegetables on foil, season, fold into a parcel and bake at 200 °C for 15 to 20 minutes."],
+    ["🥩 Beef and cabbage stir fry", "Meal 2 or 3", ["Lean beef, no fat (weighed raw)", "Cabbage, green pepper, mushrooms", "Garlic, curry powder, 1 teaspoon light soy sauce", "Spray and Cook"], "Slice the beef thinly and brown in a hot pan with Spray and Cook. Add the vegetables and garlic, stir fry for 4 minutes, finish with the soy sauce."],
+    ["🥚 Spinach and mushroom egg", "Meal 1", ["1 egg", "Spinach and mushrooms (your Meal 1 vegetables)", "Black pepper, herbs", "Spray and Cook"], "Sauté the mushrooms and spinach with Spray and Cook, pour over the beaten egg and cook gently. Season with pepper and herbs."],
+    ["🧀 Cottage cheese salad", "Meal 1 or 2 (cheese once a day)", ["Fat free cottage cheese (weighed)", "Lettuce, cucumber, tomato (70 g a day at most), gherkins", "Vinegar, black pepper"], "Arrange the vegetables, top with cottage cheese and season with vinegar and pepper."],
+    ["🦑 Garlic calamari with brinjal", "Meal 2 or 3", ["Calamari (weighed raw)", "Brinjal and baby marrow", "Garlic, parsley, lemon", "Spray and Cook"], "Grill sliced brinjal and baby marrow. Cook the calamari quickly in a very hot pan with garlic (1 to 2 minutes), add parsley and lemon."],
+    ["🥣 Plain yoghurt with fruit", "Meal 1", ["175 ml plain fat free yoghurt", "1 fruit from your allowance (e.g. apple or kiwi)", "Cinnamon"], "Chop the fruit, stir into the yoghurt and sprinkle with cinnamon. Counts as one of your 2 fruits."],
+    ["🍵 Hot drink ideas", "Any time", ["Rooibos or green tea, no milk", "Sweetener if you like", "Lemon slice or cinnamon stick"], "Great between meals and instead of a late snack. No milk, no sugar, no honey."],
+  ];
+  function viewRecipes() {
+    return `<section class="card"><h2>🥗 Recipes that follow the plan</h2><p class="note" style="margin-top:0">No oil (Spray and Cook only), one protein per meal, weigh raw, herbs and spices instead of spice mixes. Log the ingredients in the Food page as usual.</p></section>
+      ${RECIPES.map(([t, when, ing, how]) => `<details class="card fold"><summary>${t} <small class="muted">· ${when}</small></summary><h3>Ingredients</h3><ul class="pglist">${ing.map((x) => `<li>${esc(x)}</li>`).join("")}</ul><h3>Method</h3><p>${esc(how)}</p></details>`).join("")}`;
   }
 
   // =====================================================================
@@ -1638,7 +2086,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
   // =====================================================================
   // Admin Control Centre (administrators only; needs PIN + email code)
   // =====================================================================
-  const ADMIN_TABS = [["dashboard", "🏠", "Dashboard"], ["participants", "👥", "Participants"], ["challenges", "🎯", "Challenges"], ["scoring", "🏆", "Leaderboard & scoring"],
+  const ADMIN_TABS = [["dashboard", "🏠", "Dashboard"], ["participants", "👥", "Participants"], ["profiles", "📝", "Participant details"], ["challenges", "🎯", "Challenges"], ["scoring", "🏆", "Leaderboard & scoring"],
     ["awards", "🎖️", "Awards & badges"], ["progress", "📈", "Progress"], ["comms", "✉️", "Communications"], ["reports", "📊", "Reports"], ["settings", "⚙️", "Settings"], ["audit", "📜", "Audit log"]];
   const statusPill = (s) => `<span class="pill ${s === "active" ? "good" : s === "pending" ? "" : "warn"}">${esc(s)}</span>`;
   const memberOptions = (sel = "") => MEMBERS.map((m) => `<option value="${m.id}" ${m.id === sel ? "selected" : ""}>${esc(m.name)}</option>`).join("");
@@ -1647,7 +2095,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
     const A = state.admin;
     if (!A) return `<section class="card"><h2>Admin Control Centre</h2><p class="muted">Loading…</p></section>`;
     const t = state.adminTab;
-    const body = { dashboard: admDashboard, participants: admParticipants, challenges: admChallenges, scoring: admScoring, awards: admAwards, progress: admProgress, comms: admComms, reports: admReports, settings: admSettings, audit: admAudit }[t]();
+    const body = { dashboard: admDashboard, participants: admParticipants, profiles: admProfiles, challenges: admChallenges, scoring: admScoring, awards: admAwards, progress: admProgress, comms: admComms, reports: admReports, settings: admSettings, audit: admAudit }[t]();
     return `<section class="card admin-head"><div class="row"><img src="img/avatars/navigator.webp" class="av lg" alt=""><div><div class="brand">Stoic by Choice</div><div class="brand-sub">Admin Control Centre</div></div></div>
       <div class="admtabs">${ADMIN_TABS.map(([k, i, l]) => `<button class="${k === t ? "on" : ""}" data-adm="${k}">${i} ${l}</button>`).join("")}</div></section>${body}`;
   }
@@ -1660,7 +2108,9 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
     const issued = state.manualAwards.length + R().weeks.filter((w) => w.done && w.winners.length).length + R().months.filter((m) => m.done && m.winners.length).length;
     const days = []; for (let i = 6; i >= 0; i--) days.push(addDays(t, -i));
     const counts = days.map((d) => (d < settings().start ? 0 : MEMBERS.filter((m) => dayStatus(rec(m.id), d).any).length)), max = Math.max(1, MEMBERS.length);
-    return `<section class="card"><div class="kpis">
+    const al = A.alerts || [];
+    return `<section class="card ${al.length ? "alertcard" : ""}"><h2>🛡️ Safety alerts</h2>${al.length ? `<div class="list">${al.map((x) => `<div class="item"><div class="grow"><div class="t">${x.level === "high" ? "🔴" : "🟠"} ${esc(x.text)}</div></div></div>`).join("")}</div><p class="note">Private to you. Check in kindly; for under 18s, speak to their parent and the clinic.</p>` : `<p class="note" style="margin:0">✅ No safety concerns: nobody under 18 is eating too little, nobody is losing faster than the safe pace, and everyone has logged in the last 3 days.</p>`}</section>
+      <section class="card"><div class="kpis">
         <div class="kpi"><b>${active}</b><span>Participants</span></div><div class="kpi"><b>${groups}</b><span>Groups</span></div>
         <div class="kpi"><b>${activeCh}</b><span>Active challenges</span></div><div class="kpi"><b>${issued}</b><span>Awards issued</span></div></div>
         ${pending ? `<div class="holiday" style="margin-top:12px">🕓 <b>${pending} registration${pending === 1 ? "" : "s"} waiting for approval.</b> <a href="#" data-adm="participants">Review now</a></div>` : ""}
@@ -1714,7 +2164,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
 
   function admScoring() {
     const c = state.admin.config, P = c.points;
-    const labels = { checkin: "Check in", food: "Eat and log 3 meals", eatPenalty: "Skipped meals / starving (negative)", exercise: "Move (20 min or step goal)", water: "Water goal", sleep: "Sleep goal", reflect: "Journal", task: "Daily challenge", weighin: "Official weigh in", missed: "Missed day (negative)", perPercent: "Per 1% of weight lost", treatBonus: "Treat token week bonus" };
+    const labels = { checkin: "Check in", food: "Eat and log 3 meals", eatPenalty: "Skipped meals / starving (negative)", flagPenalty: "More than 3 bad habit flags (negative)", weighMinMet: "Weigh in: minimum loss met", weighLost: "Weigh in: lost, below minimum", weighBelowMin: "Weigh in: no weight lost (negative)", weighGain: "Weigh in: weight gained (negative)", exercise: "Move (20 min or step goal)", water: "Water goal", sleep: "Sleep goal", reflect: "Journal", task: "Daily challenge", weighin: "Official weigh in", missed: "Missed day (negative)", perPercent: "Per 1% of weight lost", treatBonus: "Treat token week bonus" };
     return `<section class="card"><h2>🏆 Scoring rules</h2><p class="note">Points are always calculated by the server from these rules. Changes apply to everyone immediately and are recorded in the audit log.</p>
       <form class="form" id="scoreForm"><div class="grid2">${Object.keys(labels).map((k) => `<label>${labels[k]}<input type="number" data-pt="${k}" value="${P[k]}" step="1"></label>`).join("")}
         <label>Daily water goal (glasses)<input type="number" id="wTarget" min="1" max="20" value="${(c.water || {}).target || 8}"></label>
@@ -1773,7 +2223,9 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
       <section class="card"><h2>💾 Backup and restore</h2>
         <p class="note">Your data is kept safely by Netlify and is not affected when you update or redeploy the app. For extra peace of mind, download a full backup now and then (for example after each Saturday weigh in) and keep it somewhere private: it contains everyone's health information.</p>
         <div class="form"><button class="btn full" data-backup>⬇️ Download full backup</button>
-        <label class="btn ghost full center" style="cursor:pointer">⬆️ Restore from a backup file<input type="file" id="restoreFile" accept=".json,application/json" hidden></label></div></section>`;
+        <label class="btn ghost full center" style="cursor:pointer">⬆️ Restore from a backup file<input type="file" id="restoreFile" accept=".json,application/json" hidden></label></div>
+        <h3>🗓️ Automatic daily backups</h3><p class="note">The app saves a full copy every night at 02:00 and keeps the last 30 days, in the same secure store.</p>
+        ${state.backups ? (state.backups.length ? `<div class="list">${state.backups.map((d) => `<div class="item"><div class="grow"><div class="t">${fmtDate(d, { weekday: "short", day: "numeric", month: "short", year: "numeric" })}</div></div><button class="btn ghost" data-restoresnap="${d}">Restore</button></div>`).join("")}</div>` : `<p class="note">No daily backups yet; the first is made tonight at 02:00.</p>`) : `<button class="btn ghost full" data-listbackups>Show daily backups</button>`}</section>`;
   }
 
   function admSettings() {
@@ -1851,6 +2303,19 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
     }));
     on("datesForm", () => adminSend({ action: "settings", start: $("#sStart").value, end: $("#sEnd").value }, "📅 Dates saved."));
     on("polForm", () => adminSend({ action: "config", config: { ...A.config, pin: { maxAttempts: Number($("#pMax").value), lockMinutes: Number($("#pLock").value), hardLockAfter: 50 }, autoApprove: $("#pAuto").checked, rulesText: $("#pRules").value, privacyText: $("#pPriv").value } }, "⚙️ Settings saved."));
+    $$("[data-profform]", v).forEach((f) => f.addEventListener("submit", (e) => {
+      e.preventDefault(); const id = f.dataset.profform, fd = new FormData(f), p = {};
+      for (const k of ["age", "heightCm", "goalWeight", "startWeight", "beforeWeight", "waistCm", "hipCm"]) { const x = fd.get(k); if (x !== null && x !== "") p[k] = Number(String(x).replace(",", ".")); }
+      p.sex = fd.get("sex"); p.junior = !!fd.get("junior");
+      for (const k of [...ABOUT_FIELDS.map((x) => x[0]), "adminNote"]) p[k] = String(fd.get(k) || "").trim();
+      if (!p.waistCm) delete p.waistCm; if (!p.hipCm) delete p.hipCm;
+      adminSend({ action: "profile", memberId: id, profile: p }, `✓ ${esc(nameOf(id).split(" ")[0])}'s details saved.`);
+    }));
+    on("buddyForm", () => { const pairs = $$("[data-bud]", v).filter((x) => x.value).map((x) => [x.dataset.bud, x.value]); adminSend({ action: "buddies", pairs }, "🤝🏾 Buddy pairs saved."); });
+    $("[data-wsum]", v)?.addEventListener("click", async () => { try { await navigator.clipboard.writeText(state.weighSummary || ""); toast("📋 Summary copied. Paste it in the WhatsApp group."); } catch { toast("Copy did not work on this phone."); } });
+    $("[data-print]", v)?.addEventListener("click", () => window.print());
+    $("[data-listbackups]", v)?.addEventListener("click", async () => { try { const d = await api("admin", { method: "POST", body: { action: "backups" } }); applyState(d); state.backups = d.backups || []; render(); } catch (e) { toast("⚠️ " + esc(e.message)); } });
+    $$("[data-restoresnap]", v).forEach((b) => b.addEventListener("click", () => { if (confirm(`Restore everyone's data to the backup of ${b.dataset.restoresnap}? Anything logged after that will be replaced.`)) adminSend({ action: "restoreSnapshot", date: b.dataset.restoresnap }, "✓ Daily backup restored."); }));
     // Group weigh in (health data)
     const gf = $("#groupForm", v);
     if (gf) {
@@ -1858,7 +2323,9 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
       $("#gDate").addEventListener("change", fill); fill();
       gf.addEventListener("submit", async (e) => {
         e.preventDefault();
-        const entries = $$("[data-gw]", gf).filter((i) => i.value).map((i) => ({ memberId: i.dataset.gw, kg: Number(i.value) }));
+        const val = (sel, id) => { const x = $(`[${sel}="${id}"]`, gf); return x && x.value ? Number(x.value) : null; };
+        const entries = $$("[data-gw]", gf).filter((i) => i.value).map((i) => ({ memberId: i.dataset.gw, kg: Number(i.value), waistCm: val("data-gwaist", i.dataset.gw), hipCm: val("data-ghip", i.dataset.gw) }));
+        state.weighShow = $("#gDate").value;
         if (await adminSend({ action: "weights", date: $("#gDate").value, entries }, `⚖️ Saved ${entries.length} weights.`)) confetti();
       });
     }
@@ -1891,12 +2358,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
   // ---------- Events ----------
   function bind() {
     const v = $("#view");
-    $("[data-install]", v)?.addEventListener("click", async () => {
-      const ev = state.installEvt; if (!ev) return;
-      ev.prompt(); const choice = await ev.userChoice.catch(() => null); state.installEvt = null;
-      if (choice && choice.outcome === "accepted") toast("📲 Installed. Find the Stoic by Choice icon on your home screen.");
-      render();
-    });
+    $("[data-install]", v)?.addEventListener("click", installApp);
     $$("[data-plan]", v).forEach((b) => b.addEventListener("click", async () => {
       const [n, i] = b.dataset.plan.split(":").map(Number), [label, items] = myPlan()[n][i];
       b.disabled = true;
@@ -1910,7 +2372,9 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
       } else b.disabled = false;
     }));
     $$("[data-quick]", v).forEach((b) => b.addEventListener("click", () => {
-      const q = QUICK_MOVES[Number(b.dataset.quick)], e = quickEntry(q); b.disabled = true;
+      const q = QUICK_MOVES[Number(b.dataset.quick)];
+      if (q[4] === "ask") { const i = ACTIVITIES.findIndex((x) => x[0] === q[1]); $("#act").value = String(i); $("#act").dispatchEvent(new Event("change")); $("#exForm").scrollIntoView({ behavior: "smooth" }); setTimeout(() => { $("#rounds").select(); $("#rounds").focus(); }, 400); return toast("🛗 Enter the floor and <b>how many times</b> you climbed, then tap Add."); }
+      const e = quickEntry(q); b.disabled = true;
       addEntry("exercises", { id: uid(), date: todayStr(), ...e }, `💪🏾 ${esc(e.activity)} logged (${fmt(e.kcal)} kcal).`, true);
     }));
     $$("[data-allow]", v).forEach((b) => b.addEventListener("click", () => {
@@ -1919,9 +2383,22 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
       b.disabled = true;
       addEntry("foods", { id: uid(), date: todayStr(), meal: "Snack", foodId: id, qty: 1, time: ($("#ptime") && $("#ptime").value) || nowHM() }, `${id === "provita" ? "🍘 Provita" : "🍊 Fruit"} logged.`);
     }));
+    $$("[data-routine]", v).forEach((b) => b.addEventListener("click", async () => {
+      const k = b.dataset.routine, [, , label] = ROUTINE.find((x) => x[0] === k);
+      if (await addEntry("routine", { id: uid(), date: todayStr(), kind: k }, `✅ ${esc(label)}.`)) { if (k === "write") toast("✍🏾 Well done. If you wrote in the app, your Journal page keeps it private."); }
+    }));
+    $$("[data-cheer]", v).forEach((b) => b.addEventListener("click", async () => { b.disabled = true; if (await send({ action: "cheer", to: b.dataset.cheer, emoji: "👏🏾" })) { render(); toast("👏🏾 Cheer sent!"); } else b.disabled = false; }));
+    $$("[data-push]", v).forEach((b) => b.addEventListener("click", async () => {
+      const a = b.dataset.push;
+      if (a === "on") return pushOn();
+      try { if (a === "test") { await api("push/test", { method: "POST", body: {} }); toast("Test sent. It should arrive in a few seconds."); } if (a === "off") { const reg = await navigator.serviceWorker.ready, sub = await reg.pushManager.getSubscription(); if (sub) await sub.unsubscribe(); await api("push/off", { method: "POST", body: {} }); await load(); render(); toast("Reminders turned off."); } } catch (e) { toast("⚠️ " + esc(e.message)); }
+    }));
+    $$("[data-pp]", v).forEach((c) => c.addEventListener("change", async () => { const prefs = {}; $$("[data-pp]", v).forEach((x) => { prefs[x.dataset.pp] = x.checked; }); try { await api("push/prefs", { method: "POST", body: { prefs } }); state.push.prefs = prefs; toast("✓ Saved."); } catch (e) { toast("⚠️ " + esc(e.message)); } }));
+    $("[data-sync]", v)?.addEventListener("click", async () => { try { const d = await api("data", { method: "POST", body: { action: "syncCode" } }); applyState(d); state.newSyncCode = d.syncCode; render(); } catch (e) { toast("⚠️ " + esc(e.message)); } });
+    $("[data-share]", v)?.addEventListener("click", async () => { const text = state.reportText || ""; try { if (navigator.share) await navigator.share({ text }); else { await navigator.clipboard.writeText(text); toast("📋 Copied. Paste it in WhatsApp."); } } catch {} });
     $("[data-installhide]", v)?.addEventListener("click", () => { try { localStorage.setItem("sbc_install_hide", "1"); } catch {} render(); });
     $$("[data-hs]", v).forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); onHotspot(b); }));
-    $$("[data-log]", v).forEach((b) => b.addEventListener("click", () => { state.logMode = b.dataset.log; state.jMood = undefined; state.jChecks = null; render(); }));
+    $$("[data-log]", v).forEach((b) => b.addEventListener("click", () => { state.jMood = undefined; state.jChecks = null; go(b.dataset.log); }));
     const setWater = async (n) => {
       const r = rec(state.me), d = state.date, wt = waterTarget(), before = glasses(r, d);
       n = Math.max(0, Math.min(30, n));
@@ -2011,7 +2488,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
         $("[data-clear]", box).addEventListener("click", () => { picked = null; $("#fsearch").value = ""; showPicked(); $("#fsearch").focus(); });
         $("#fadd").disabled = false;
       };
-      const pick = (f) => { picked = f; qty = 1; amount = f.def || 100; custom = false; $("#fcustom").classList.add("hidden"); $("#fresults").innerHTML = ""; $("#fsearch").value = f.name; showPicked(); };
+      const pick = (f) => { pickedMeal = null; picked = f; qty = 1; amount = f.def || 100; custom = false; $("#fcustom").classList.add("hidden"); $("#fresults").innerHTML = ""; $("#fsearch").value = f.name; showPicked(); };
       $("#fsearch").addEventListener("input", () => {
         const q = $("#fsearch").value; picked = null; showPicked();
         const res = searchFoods(q);
@@ -2022,14 +2499,42 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
       });
       $$("[data-foodid]", v).forEach((b) => b.addEventListener("click", () => { pick(FOOD_BY_ID[b.dataset.foodid]); ff.scrollIntoView({ behavior: "smooth" }); }));
       $$("[data-meal]", v).forEach((b) => b.addEventListener("click", () => { state.foodMeal = b.dataset.meal; $("#meal").value = b.dataset.meal; $$("[data-meal]", v).forEach((x) => x.classList.toggle("on", x === b)); $("#fadd").textContent = "Add to " + b.dataset.meal; }));
-      $("#fpicklist", v)?.addEventListener("change", (e) => { const f = FOOD_BY_ID[e.target.value]; if (f) { $("#fsearch").value = ""; $("#fresults").innerHTML = ""; pick(f); } });
+      let pickedMeal = null;
+      $("[data-scan]", v)?.addEventListener("click", scanModal);
+      $$("[data-fcat]", v).forEach((b) => b.addEventListener("click", () => {
+        state.foodCat = b.dataset.fcat; $$("[data-fcat]", v).forEach((x) => x.classList.toggle("on", x === b));
+        $("#fpicklist").innerHTML = catOptions(rec(state.me), state.foodCat); picked = null; pickedMeal = null; $("#fpicked").classList.add("hidden"); $("#fadd").disabled = true;
+        $("#fpicklist").focus();
+      }));
+      $("#fpicklist", v)?.addEventListener("change", (e) => {
+        let val = e.target.value;
+        if (val.startsWith("fav")) {
+          const x = frequentFoods(rec(state.me))[Number(val.slice(3))]; if (!x) return;
+          if (x.type === "plan") { val = x.id; } // continues to the plan meal branch below
+          else if (x.type === "custom") { picked = null; pickedMeal = null; custom = true; $("#fcustom").classList.remove("hidden"); $("#fname").value = x.name; $("#fkcal").value = x.kcal; $("#fpicked").classList.add("hidden"); $("#fadd").disabled = false; return; }
+          else { pick(FOOD_BY_ID[x.id]); if (x.amount) { amount = x.amount; } if (x.qty) { qty = x.qty; } showPicked(); return; }
+        }
+        const pm = PLAN_MEALS.find((m) => m.id === val);
+        if (pm) { pickedMeal = pm; picked = null; custom = false; $("#fsearch").value = ""; $("#fresults").innerHTML = ""; $("#fcustom").classList.add("hidden");
+          const box = $("#fpicked"); box.classList.remove("hidden");
+          box.innerHTML = `<div><b>Plan Meal ${pm.n}: ${esc(pm.label)}</b><br><small>${pm.items.map(([fid, q]) => `${esc(FOOD_BY_ID[fid].name)} ${FOOD_BY_ID[fid].unit ? q + " " + FOOD_BY_ID[fid].unit : "× " + q}`).join(" + ")}</small></div><div class="kcalbig" style="margin-top:6px">${pm.kcal} <small>kcal</small></div><p class="note">Weigh raw. Logged together as one meal.</p>`;
+          $("#fadd").disabled = false; return; }
+        pickedMeal = null;
+        const f = FOOD_BY_ID[val]; if (f) { $("#fsearch").value = ""; $("#fresults").innerHTML = ""; pick(f); }
+      });
       ff.addEventListener("submit", async (e) => {
         e.preventDefault();
         const tm = $("#ftime").value || nowHM(); if (tm > nowHM()) return toast("The time eaten cannot be later than now.");
         const base = { id: uid(), date: todayStr(), meal: $("#meal").value, time: tm };
-        if (picked && picked.unit) { if (!amount) return toast("Please enter how much."); return addEntry("foods", { ...base, foodId: picked.id, amount, kcal: foodKcal(picked, amount), name: picked.name }, `🍽️ ${esc(picked.name.replace(/ \(plan[^)]*\)/, ""))} (${amount} ${picked.unit}): ${foodKcal(picked, amount)} kcal logged.`); }
-        if (picked) return addEntry("foods", { ...base, foodId: picked.id, qty, kcal: Math.round(picked.kcal * qty), name: picked.name }, `🍽️ ${esc(picked.name)}: ${Math.round(picked.kcal * qty)} kcal logged.`);
-        if (custom) { if (!$("#fname").value.trim() || $("#fkcal").value === "") return toast("Please enter the food and its calories."); return addEntry("foods", { ...base, name: $("#fname").value.trim(), kcal: Number($("#fkcal").value) }, `🍽️ ${esc($("#fname").value.trim())} logged.`); }
+        if (pickedMeal) {
+          const pm = pickedMeal, entries = pm.items.map(([fid, q]) => ({ id: uid(), date: todayStr(), meal: base.meal, time: tm, foodId: fid, ...(FOOD_BY_ID[fid].unit ? { amount: q } : { qty: q }) }));
+          $("#fadd").disabled = true;
+          if (await send({ action: "addMany", type: "foods", entries, planLabel: pm.label })) { pickedMeal = null; render(); toast(`🍽️ ${esc(base.meal)}: ${esc(pm.label)} logged (${pm.kcal} kcal).`); learnScan({ type: "plan", id: pm.id, name: pm.label, kcal: pm.kcal }); } else $("#fadd").disabled = false;
+          return;
+        }
+        if (picked && picked.unit) { if (!amount) return toast("Please enter how much."); const pk = picked, am = amount; if (await addEntry("foods", { ...base, foodId: pk.id, amount: am, kcal: foodKcal(pk, am), name: pk.name }, `🍽️ ${esc(pk.name)} (${am} ${pk.unit}): ${foodKcal(pk, am)} kcal logged.`)) learnScan({ type: "food", id: pk.id, name: pk.name, amount: am, kcal: foodKcal(pk, am) }); return; }
+        if (picked) { const pk = picked, q = qty; if (await addEntry("foods", { ...base, foodId: pk.id, qty: q, kcal: Math.round(pk.kcal * q), name: pk.name }, `🍽️ ${esc(pk.name)}: ${Math.round(pk.kcal * q)} kcal logged.`)) learnScan({ type: "food", id: pk.id, name: pk.name, qty: q, kcal: Math.round(pk.kcal * q) }); return; }
+        if (custom) { const nm = $("#fname").value.trim(), kc = Number($("#fkcal").value); if (!nm || $("#fkcal").value === "") return toast("Please enter the food and its calories."); if (await addEntry("foods", { ...base, name: nm, kcal: kc }, `🍽️ ${esc(nm)} logged.`)) learnScan({ type: "custom", name: nm, kcal: kc }); return; }
         toast("Type a food and choose it from the list.");
       });
     }
@@ -2043,14 +2548,16 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
         $("#kmWrap").style.display = custom || act[2] ? "grid" : "none";
         $("#stWrap").style.display = custom || act[3] ? "grid" : "none";
         $("#floorsWrap").style.display = !custom && act[5] === "floors" ? "grid" : "none";
+        const upOnly = !custom && act[6] === "up";
         if (!custom && act[5] === "floors") {
           // About 20 steps per floor. Energy per step: about 0.11 kcal up and 0.05 kcal down for a 70 kg adult (Teh and Aziz, 2002), scaled to body weight.
           const w = latestWeight(rec(state.me)) || 70, fl = Math.max(1, Number($("#floors").value) || 1), rounds = Math.max(1, Number($("#rounds").value) || 1);
           const stepsUp = fl * 20 * rounds;
-          $("#exkcal").value = Math.round(stepsUp * (0.11 + 0.05) * w / 70);
-          $("#exsteps").value = stepsUp * 2; $("#exkm").value = "";
+          // Lift back down: only the climb counts (about 0.11 kcal per step up).
+          $("#exkcal").value = Math.round(stepsUp * (upOnly ? 0.11 : 0.11 + 0.05) * w / 70);
+          $("#exsteps").value = upOnly ? stepsUp : stepsUp * 2; $("#exkm").value = "";
           $("#stWrap").style.display = "grid"; $("#kmWrap").style.display = "none";
-          if (state.lastAct !== a || state.floorsKey !== fl + "x" + rounds) { $("#mins").value = Math.max(1, Math.round(fl * rounds * 0.55)); state.floorsKey = fl + "x" + rounds; }
+          if (state.lastAct !== a || state.floorsKey !== fl + "x" + rounds) { $("#mins").value = Math.max(1, Math.round(fl * rounds * (upOnly ? 0.35 : 0.55))); state.floorsKey = fl + "x" + rounds; }
           state.lastAct = a;
           return;
         }
@@ -2086,7 +2593,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
         e.preventDefault();
         const a = $("#act").value;
         let activity = a === "custom" ? ($("#actName").value.trim() || "Exercise") : ACTIVITIES[a][0];
-        if (a !== "custom" && ACTIVITIES[a][5] === "floors") { const fl = Number($("#floors").value) || 1, rn = Number($("#rounds").value) || 1; activity = `Stairs to floor ${fl} and back${rn > 1 ? ` × ${rn}` : ""}`; }
+        if (a !== "custom" && ACTIVITIES[a][5] === "floors") { const fl = Number($("#floors").value) || 1, rn = Number($("#rounds").value) || 1; activity = ACTIVITIES[a][6] === "up" ? `Stairs up to floor ${fl}, lift down${rn > 1 ? ` × ${rn}` : ""}` : `Stairs to floor ${fl} and back${rn > 1 ? ` × ${rn}` : ""}`; }
         const entry = { id: uid(), date: todayStr(), activity, minutes: Number($("#mins").value), kcal: Math.round(Number($("#exkcal").value)), distanceKm: Number($("#exkm").value) || 0, steps: Number($("#exsteps").value) || 0 };
         await addEntry("exercises", entry, `💪🏾 ${esc(activity)} logged.`, true);
       });
@@ -2128,7 +2635,12 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
       e.preventDefault();
       const n = (id) => { const x = $(id).value; return x === "" ? null : Number(x); };
       const profile = { ...rec(state.me).profile, sex: $("#pSex").value, age: n("#pAge"), heightCm: n("#pH"), startWeight: n("#pSW"), goalWeight: n("#pGW"), activity: Number($("#pAct").value), rate: Number($("#pRate").value), kidPlan: $("#pKid") ? $("#pKid").value : "controlled" };
-      if (await send({ member: state.me, action: "profile", profile })) { render(); toast("✓ Profile saved. Your targets are updated."); }
+      for (const [k] of ABOUT_FIELDS) profile[k] = $("#ab_" + k).value.trim();
+      const waist = $("#pWaist") ? Number($("#pWaist").value) : 0, hip = $("#pHip") ? Number($("#pHip").value) : 0;
+      if (await send({ member: state.me, action: "profile", profile })) {
+        if (waist || hip) await send({ action: "add", type: "measures", entry: { id: uid(), date: todayStr(), waistCm: waist || null, hipCm: hip || null } });
+        render(); toast("✓ Profile saved. Your coach will use it.");
+      }
     });
 
     // Calculator
@@ -2154,12 +2666,23 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
     render();
     toast(`${msg}${gained > 0 ? ` <b>+${gained} pts</b>` : ""}${!wasChecked ? " Checked in for the day ✓" : ""}<br><small style="opacity:.8">“${esc(q)}” · ${esc(who)}</small>`, 5200);
     if (party || !wasChecked) confetti();
+    return true;
   }
 
+  // Page history for the Back button (and the phone's own back gesture).
+  const navStack = [];
+  function goBack() {
+    const prev = navStack.pop();
+    if (!prev) { state.tab = "today"; render(); window.scrollTo({ top: 0 }); return; }
+    state.tab = prev.tab; state.logMode = prev.logMode; render(); window.scrollTo({ top: 0 });
+  }
+  window.addEventListener("popstate", () => { if (navStack.length || state.tab !== "today") goBack(); });
   function go(tab) {
     if (tab === "home") tab = "today";
+    const from = { tab: state.tab, logMode: state.logMode };
     state.jChecks = null;
     if (["food", "move", "water", "sleep", "journal"].includes(tab)) { state.logMode = tab; state.sleepH = undefined; state.sleepQ = undefined; tab = "log"; }
+    if (from.tab !== tab || from.logMode !== state.logMode) { navStack.push(from); if (navStack.length > 30) navStack.shift(); try { history.pushState({ sbc: navStack.length }, ""); } catch {} }
     state.tab = tab; render(); window.scrollTo({ top: 0, behavior: "smooth" });
     if (tab === "admin") adminSend({ action: "view" });
   }
@@ -2177,6 +2700,11 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, DEFAULT_SETTI
     if (t.inputMode === "decimal" && /[, ]/.test(t.value)) t.value = t.value.replace(/,/g, ".").replace(/\s/g, "");
     else if (t.hasAttribute("data-int") && /\D/.test(t.value)) t.value = t.value.replace(/\D/g, "");
   }, true);
+
+  document.getElementById("installBtn")?.addEventListener("click", installApp);
+  updateInstallBtn(); window.matchMedia("(display-mode: standalone)").addEventListener?.("change", updateInstallBtn);
+  // Links from reminders (e.g. /#food) open the right page.
+  window.addEventListener("load", () => { const h = location.hash.slice(1); if (h && ["food", "water", "move", "sleep", "journal", "admin", "board", "me"].includes(h)) setTimeout(() => { go(h); history.replaceState(null, "", "/"); }, 900); });
 
   // Installable app: register the service worker and catch the install prompt (Android / desktop Chrome).
   if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));

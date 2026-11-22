@@ -8,7 +8,7 @@ export const DEFAULT_SETTINGS = { start: "2026-11-17", end: "2027-04-24", title:
 
 export const DEFAULT_CONFIG = {
   // Scoring version 2 (19 Nov 2026): one clear daily scorecard worth 20 points, each item counted once per day.
-  points: { checkin: 4, food: 3, exercise: 5, water: 3, sleep: 2, reflect: 1, task: 2, weighin: 10, missed: -10, eatPenalty: -5, perPercent: 100, treatBonus: 15 },
+  points: { checkin: 4, food: 3, exercise: 5, water: 3, sleep: 2, reflect: 1, task: 2, weighin: 10, missed: -10, eatPenalty: -5, flagPenalty: -3, weighGain: -10, weighBelowMin: -5, weighLost: 3, weighMinMet: 5, perPercent: 100, treatBonus: 15 },
   water: { target: 8 },
   sleep: { target: 7 },
   steps: { goal: 7500 },
@@ -77,10 +77,15 @@ export const PLANS = {
   },
 };
 export const MOVE_MINUTES = 20;
+// Weigh in result: minimum loss expected between official weigh ins (kg per week; under 18s half, per the Junior plan's gentler pace).
+export const WEIGH_MIN_PER_WEEK = { adult: 0.5, junior: 0.25 };
+export const WEIGH_RESULT_FROM = "2026-12-05"; // weigh in result points start at the next weigh in, not the one of 21 November
 // Eat enough rule (from 19 Nov 2026): three meals a day, never a starvation day.
 // Under 800 kcal a day is a very low calorie diet, which should only be done under medical supervision (NICE obesity guidance);
 // under 18s should not go below about 1 200 kcal. People on a clinic eating plan follow its rule instead: three meals, never skip one.
 export const EAT_RULE_FROM = "2026-11-19";
+export const FLAG_RULE_FROM = "2026-11-22"; // more than 3 bad habit flags in a day costs points from this date
+export const FLAG_LIMIT = 3;
 export const MEALS_NEEDED = 3;
 const NOT_A_MEAL = new Set(["Drinks", "Supplements", "Medicines"]);
 export const FRUIT_ALLOWANCE = 2; // fruit portions a day (eating plans: 2)
@@ -167,7 +172,7 @@ export function todaySA(now = new Date()) {
   return `${g("year")}-${g("month")}-${g("day")}`;
 }
 export const holiday = (d) => HOLIDAYS[d] || null;
-export const emptyRecord = () => ({ profile: {}, foods: [], exercises: [], weights: [], treats: [], tasks: [], reflections: [], challenges: [], water: [], sleep: [], steps: [], checkins: [] });
+export const emptyRecord = () => ({ profile: {}, foods: [], exercises: [], weights: [], treats: [], tasks: [], reflections: [], challenges: [], water: [], sleep: [], steps: [], checkins: [], measures: [], routine: [] });
 // Picture journal: tap what you did today, no writing needed.
 export const JOURNAL_CHECKS = [
   ["veg", "🥦", "I ate vegetables"], ["fruit", "🍎", "I ate fruit"], ["water", "🥛", "I drank water"], ["moved", "🏃🏾", "I moved my body"],
@@ -216,7 +221,8 @@ export function makeEngine(ctx) {
   /** Official weight: the latest weight recorded by the administrator at or before d (or the starting weight). */
   const officialWeightOn = (r, d) => { const w = sortByDate(r.weights).filter((x) => x.verified && x.date <= d); return w.length ? w[w.length - 1].kg : startWeight(r); };
   const hasOfficial = (r) => r.weights.some((x) => x.verified && weighDays().includes(x.date));
-  const isMinor = (r) => !!(r.profile.age && r.profile.age < 18);
+  // Under 18 when the age is below 18, or when marked as a junior by the administrator (age not known).
+  const isMinor = (r) => !!((r.profile.age && r.profile.age < 18) || (!r.profile.age && r.profile.junior));
   const isChild = (r) => !!(r.profile.age && r.profile.age < 12);
   const habitsOnly = (r) => isMinor(r) && r.profile.kidPlan === "habits";
   // Safe weekly pace. Children 6 to 11: about 0.5 kg a month; teens: 0.5 kg a week; adults: 1 kg a week.
@@ -250,7 +256,7 @@ export function makeEngine(ctx) {
     const sl = sleepOn(r, d), slept = !!sl, sleepGoal = !!sl && sl.hours >= sleepTarget(r);
     const stp = daySteps(r, d), stepsGoal = stp >= stepGoal(), wtv = r.weights.some((x) => x.date === d && x.verified);
     const checkin = (r.checkins || []).some((x) => x.date === d);
-    return { food, ex, wt, wtv, task, reflect, chal, water, waterGoal, glasses: g, slept, sleepGoal, steps: stp, stepsGoal, checkin, any: checkin || food || ex || wt || task || reflect || chal || water || slept || stp > 0 };
+    return { food, ex, wt, wtv, task, reflect, chal, water, waterGoal, glasses: g, slept, sleepGoal, steps: stp, stepsGoal, checkin, any: checkin || food || ex || wt || task || reflect || chal || water || slept || stp > 0 || (r.routine || []).some((x) => x.date === d) };
   }
   const activeMinutes = (r, d) => r.exercises.filter((e) => e.date === d).reduce((a, e) => a + (e.minutes || 0), 0);
   /** The daily scorecard: the ONLY source of daily points. Each item counts once per day. */
@@ -272,6 +278,25 @@ export function makeEngine(ctx) {
     flags.push(...planFlags(r, d, foods, weekFoods));
     return { meals, kcal, minKcal, onPlan, fruit, provitas, flags, tooLittle: foods.length > 0 && kcal < minKcal, enough: meals >= MEALS_NEEDED && !(kcal < minKcal) };
   }
+  /** Result of an official weigh in compared with the previous official weight. Gain −10, no loss or less than the minimum −5 / +3, minimum met +5. */
+  function weighResult(r, d) {
+    if (d < WEIGH_RESULT_FROM) return null;
+    const cur = sortByDate(r.weights).filter((x) => x.verified && x.date === d).pop(); if (!cur || !isWeighDay(d)) return null;
+    const prev = sortByDate(r.weights).filter((x) => x.verified && x.date < d).pop(); if (!prev) return null;
+    const p = P(), weeksN = diffDays(prev.date, d) / 7, min = Math.round((isMinor(r) ? WEIGH_MIN_PER_WEEK.junior : WEIGH_MIN_PER_WEEK.adult) * weeksN * 10) / 10;
+    const lost = Math.round((prev.kg - cur.kg) * 10) / 10, f = (n) => n.toFixed(1).replace(".", ",");
+    // Children under 12 are still growing: keeping their weight steady is the goal, so they are never pushed to lose.
+    if (isChild(r)) {
+      const growth = Math.round(0.25 * weeksN * 10) / 10;
+      if (lost >= 0) return { pts: p.weighMinMet, lost, min: 0, label: lost > 0 ? "Weigh in: weight lost (child plan)" : "Weigh in: weight kept steady (child plan)", how: lost > 0 ? `Down ${f(lost)} kg. For children, steady is the goal` : "Steady weight while growing taller is a win" };
+      if (-lost <= growth) return { pts: 0, lost, min: 0, label: "Weigh in: normal growth (child plan)", how: `Up ${f(-lost)} kg: within normal growth, no points lost` };
+      return { pts: p.weighBelowMin, lost, min: 0, label: "Weigh in: weight gained (child plan)", how: `Up ${f(-lost)} kg, more than normal growth. Focus on water, vegetables and active play` };
+    }
+    if (lost < 0) return { pts: p.weighGain, lost, min, label: "Weigh in: weight gained", how: `Up ${f(-lost)} kg since ${prev.date.slice(8)}/${prev.date.slice(5, 7)}` };
+    if (lost === 0) return { pts: p.weighBelowMin, lost, min, label: "Weigh in: no weight lost", how: `Minimum was ${f(min)} kg` };
+    if (lost < min) return { pts: p.weighLost, lost, min, label: "Weigh in: weight lost, below the minimum", how: `Lost ${f(lost)} kg; the minimum was ${f(min)} kg` };
+    return { pts: p.weighMinMet, lost, min, label: "Weigh in: minimum loss met", how: `Lost ${f(lost)} kg (minimum ${f(min)} kg)` };
+  }
   function scorecard(r, d) {
     const st = dayStatus(r, d), p = P(), mins = activeMinutes(r, d), ruleOn = d >= EAT_RULE_FROM, eat = eating(r, d);
     const items = [
@@ -280,7 +305,7 @@ export function makeEngine(ctx) {
         ? { k: "food", icon: "🍽️", label: "Eat and log 3 meals", how: eat.minKcal ? `Breakfast, lunch and dinner, at least ${eat.minKcal.toLocaleString("en-ZA")} kcal` : "Meal 1, Meal 2 and Meal 3 from your plan", pts: p.food, done: eat.enough, progress: eat.enough ? "" : `${eat.meals} of ${MEALS_NEEDED} meals${eat.tooLittle && eat.meals >= MEALS_NEEDED ? ` · only ${eat.kcal} kcal` : ""}`, warn: !eat.enough }
         : { k: "food", icon: "🍽️", label: "Log your food", how: "At least one meal", pts: p.food, done: st.food },
       { k: "move", icon: "👟", label: "Move", how: `${MOVE_MINUTES} active minutes or ${stepGoal().toLocaleString("en-ZA")} steps`, pts: p.exercise, done: mins >= MOVE_MINUTES || st.stepsGoal, progress: mins >= MOVE_MINUTES || st.stepsGoal ? "" : mins ? `${mins} of ${MOVE_MINUTES} min` : st.steps ? `${st.steps.toLocaleString("en-ZA")} steps` : "" },
-      { k: "water", icon: "glass", label: "Drink water", how: `${waterTarget()} glasses`, pts: p.water, done: st.waterGoal, progress: st.glasses && !st.waterGoal ? `${st.glasses} of ${waterTarget()}` : "" },
+      { k: "water", icon: "glass", label: "Drink water", how: `${waterTarget()} glasses of 250 ml (${(waterTarget() * 0.25).toString().replace(".", ",")} litres)`, pts: p.water, done: st.waterGoal, progress: st.glasses && !st.waterGoal ? `${st.glasses} of ${waterTarget()}` : "" },
       { k: "sleep", icon: "🌙", label: "Sleep well", how: `${sleepTarget(r)} hours or more`, pts: p.sleep, done: st.sleepGoal },
       { k: "journal", icon: "📓", label: "Journal", how: "Tick what you did today", pts: p.reflect, done: st.reflect },
     ];
@@ -290,11 +315,13 @@ export function makeEngine(ctx) {
       items.push({ k: "task", icon: "🎯", label: "Daily challenge", how: `${DAILY_TASKS[dow(d)]} · ticks itself with ${link[1]}, no extra points`, pts: 0, done: !!linkedDone, auto: true });
     } else items.push({ k: "task", icon: "🎯", label: "Daily challenge", how: DAILY_TASKS[dow(d)], pts: p.task, done: st.task });
     if (isWeighDay(d)) items.push({ k: "weighin", icon: "⚖️", label: "Official weigh in", how: "Recorded by the administrator", pts: p.weighin, done: st.wtv, adminOnly: true });
+    const wr = weighResult(r, d); if (wr) items.push({ k: "wresult", icon: wr.pts > 0 ? "📉" : "📈", label: wr.label, how: wr.how, pts: wr.pts, done: true, adminOnly: true, penalty: wr.pts < 0, bonus: wr.pts > 0 });
     // Starving or skipping meals costs points once the day is over (only from the rule date, never on days with nothing logged: those are missed days).
     if (ruleOn && d < today() && st.any && !eat.enough) items.push({ k: "eat", icon: "⚠️", label: eat.meals < MEALS_NEEDED ? "Skipped meals" : "Too little food", how: eat.meals < MEALS_NEEDED ? `Only ${eat.meals} of ${MEALS_NEEDED} meals logged` : `Only ${eat.kcal} kcal: starving slows progress and harms health`, pts: p.eatPenalty, done: true, penalty: true });
     // Bad habit flags (no points): e.g. more than the daily fruit allowance.
     for (const f of eat.flags) items.push({ k: "flag", icon: "🚩", label: f.label, how: f.how, pts: 0, flag: true, done: false });
-    const max = items.filter((x) => !x.adminOnly && !x.penalty && !x.flag).reduce((a, x) => a + x.pts, 0);
+    if (d >= FLAG_RULE_FROM && eat.flags.length > FLAG_LIMIT) items.push({ k: "flagpen", icon: "🚩", label: `${eat.flags.length} bad habits today`, how: `More than ${FLAG_LIMIT} flags in one day costs points. Remove a wrong entry if it was a mistake.`, pts: p.flagPenalty, done: true, penalty: true });
+    const max = items.filter((x) => !x.adminOnly && !x.penalty && !x.flag && x.k !== "wresult").reduce((a, x) => a + x.pts, 0);
     return { items, max, taskDone: !!(items.find((x) => x.k === "task") || {}).done, earned: st.any ? items.filter((x) => x.done).reduce((a, x) => a + x.pts, 0) : 0 };
   }
   /** The five healthy habits for a day (used for the habit charts). */
@@ -539,7 +566,7 @@ export function makeEngine(ctx) {
 
   return {
     weighDays, isWeighDay, nextWeighDay, lastWeighDay, startWeight, weightOn, latestWeight, isMinor, isChild, habitsOnly, maxRate, planRate,
-    calorieFloor, energy, dayTotals, dayStatus, dayPoints, scorecard, activeMinutes, ledger, eating, habitsOn, HABIT_KEYS, bmi, beforeJoin, challengeWeeks, currentWeek, challengeMonths, weeks, treats, score, periodScore,
+    calorieFloor, energy, dayTotals, dayStatus, dayPoints, scorecard, weighResult, activeMinutes, ledger, eating, habitsOn, HABIT_KEYS, bmi, beforeJoin, challengeWeeks, currentWeek, challengeMonths, weeks, treats, score, periodScore,
     bestStreak, challengeDay, computeAll, P, T, glasses, waterTarget, sleepTarget, sleepOn, stepGoal, daySteps, dayKm, officialWeightOn,
   };
 }

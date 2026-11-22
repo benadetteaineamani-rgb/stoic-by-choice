@@ -195,7 +195,7 @@ const RAW = [
   ["yoghurtff", "Yoghurt, plain fat free", "175 ml tub", 98, "Dairy"],
   ["p_cheese", "Plan cheese (cottage, ricotta or mozzarella), average", "per 100 g", 155, "Eating plan", { u: "g", d: 60 }],
   ["p_fruit", "Fruit from my plan list (1 portion)", "1 portion", 60, "Fruit"],
-  ["p_veg", "Mixed plan vegetables, raw", "per 100 g raw", 22, "Eating plan", { u: "g", d: 120 }],
+  ["p_veg", "Mixed vegetables, raw (plan list)", "per 100 g raw", 22, "Eating plan", { u: "g", d: 120 }],
   ["cucumber", "Cucumber", "65 g", 10, "Vegetables"],
   ["p_cucumber", "Cucumber, weighed", "per 100 g", 15, "Vegetables", { u: "g", d: 65 }],
   ["lettuce", "Lettuce", "1 cup shredded (50 g)", 8, "Vegetables"],
@@ -214,6 +214,7 @@ const RAW = [
   ["spinach", "Spinach, raw", "per 100 g", 23, "Vegetables", { u: "g", d: 75 }],
   ["p_tomato", "Tomato, weighed (max 70 g a day on plan)", "per 100 g", 18, "Vegetables", { u: "g", d: 70 }],
   ["greenpepper", "Green pepper, raw", "per 100 g", 20, "Vegetables", { u: "g", d: 50 }],
+  ["kimchi", "Kimchi", "per 100 g", 23, "Vegetables", { u: "g", d: 75 }],
   ["apricot", "Apricot", "1", 17, "Fruit"],
   ["grapefruit", "Grapefruit", "½ fruit", 52, "Fruit"],
   ["greenmelon", "Green melon (spanspek / honeydew)", "180 g", 65, "Fruit"],
@@ -252,6 +253,8 @@ const RAW = [
   ["vitc", "Vitamin C effervescent tablet", "1 tablet", 5, "Supplements"],
   ["acv", "Apple cider vinegar", "1 tablespoon (15 ml)", 3, "Drinks"],
   ["acvwater", "Apple cider vinegar in a glass of water", "1 glass", 3, "Drinks"],
+  ["greenteaplain", "Green tea, no sweetener", "1 cup", 1, "Drinks"],
+  ["greenteaplain3", "Green tea, no sweetener", "3 cups", 3, "Drinks"],
   ["greentea", "Green tea with sweetener", "1 cup", 2, "Drinks"],
   ["greentea3", "Green tea with sweetener", "3 cups", 6, "Drinks"],
   ["rooiboss", "Rooibos with sweetener, no milk", "1 cup", 2, "Drinks"],
@@ -259,7 +262,7 @@ const RAW = [
   ["lemonwater", "Hot water with lemon", "1 cup", 4, "Drinks"],
   ["vitamins", "Vitamin / mineral supplement", "1 tablet", 0, "Supplements"],
   ["sweetener", "Sweetener (Canderel / Equal)", "1 tablet or sachet", 0, "Extras"],
-  ["gum", "Sugar free gum", "1 stick", 5, "Extras"],
+  ["gum", "Sugar free gum (no fruit flavours, max 5 a day)", "1 stick", 5, "Snacks"],
   ["litemayo", "Lite mayonnaise (Nola Lite / Trim)", "1 level teaspoon", 14, "Extras"],
   ["sprayandcook", "Spray and Cook / olive oil spray", "1 second spray", 7, "Extras"],
   ["soysauce", "Soy sauce, light", "1 teaspoon", 3, "Extras"],
@@ -268,7 +271,19 @@ const RAW = [
 ];
 
 // Foods with a unit (u: "g" or "ml") are weighed: kcal is per 100 g / 100 ml and d is the usual amount.
-export const FOODS = RAW.map(([id, name, serving, kcal, cat, w]) => ({ id, name, serving, kcal, cat, ...(w ? { unit: w.u, def: w.d } : {}) }));
+// Repeats kept only so older entries still show their name; they are not offered in the list or search.
+// (Use the quantity to log 2 Provitas or 2 oranges; weighed raw versions replace the cup or cooked portions.)
+export const HIDDEN = new Set("provita2 brownbread2 oranges naartjies greentea3 greenteaplain3 mango pawpaw cucumber lettuce broccoli cabbage tomato hake tuna chickenbreast mince p_cheese p_fruit blacktea water".split(" "));
+// The eating plan foods are shown with the ordinary groups (protein, dairy, vegetables) instead of a separate repeat group.
+// Food categories shown on the page (approved 22 Nov 2026). Every food belongs to exactly one.
+export const CATEGORIES = [
+  ["proteins", "🥩", "Proteins"], ["dairy", "🧀", "Dairy"], ["veg", "🥬", "Vegetables"], ["fruit", "🍎", "Fruit"],
+  ["carbs", "🍞", "Carbohydrates"], ["drinks", "🥤", "Drinks"], ["snacks", "🍬", "Snacks, sweets and gum"], ["condiments", "🧂", "Condiments, spices and sweeteners"],
+  ["takeaways", "🍔", "Takeaways"], ["supplements", "💊", "Supplements and vitamins"], ["medicines", "🩹", "Medicines"],
+];
+const CAT_OF = { Protein: "proteins", Dairy: "dairy", Vegetables: "veg", Fruit: "fruit", Starches: "carbs", Drinks: "drinks", Snacks: "snacks", Extras: "condiments", Takeaways: "takeaways", Supplements: "supplements", Medicines: "medicines" };
+const GROUP = (id, cat) => CAT_OF[cat !== "Eating plan" ? cat : /^p_(cottage|ricotta|mozzarella|feta|cheese)$/.test(id) ? "Dairy" : id === "p_veg" ? "Vegetables" : "Protein"] || "condiments";
+export const FOODS = RAW.map(([id, name, serving, kcal, cat, w]) => ({ id, name: name.replace(/ \((plan|plan meat|plan fish|plan cheese)\)$/, ""), serving, kcal, cat, group: GROUP(id, cat), hidden: HIDDEN.has(id), ...(w ? { unit: w.u, def: w.d } : {}) }));
 export const GRAM_CHIPS = [30, 50, 55, 60, 65, 70, 75, 90, 100, 105, 110, 115, 120, 125];
 export function foodKcal(f, amount) { return f.unit ? Math.round((f.kcal * amount) / 100) : Math.round(f.kcal * amount); }
 export const FOOD_BY_ID = Object.fromEntries(FOODS.map((f) => [f.id, f]));
@@ -277,7 +292,7 @@ export function searchFoods(q, limit = 8) {
   q = String(q || "").toLowerCase().trim();
   if (!q) return [];
   const words = q.split(/\s+/);
-  return FOODS.map((f) => {
+  return FOODS.filter((f) => !f.hidden).map((f) => {
     const n = (f.name + " " + f.cat + (f.cat === "Eating plan" ? " plan diet" : "")).toLowerCase();
     if (!words.every((w) => n.includes(w))) return null;
     return { f, s: n.startsWith(q) ? 0 : n.includes(" " + q) ? 1 : 2 };

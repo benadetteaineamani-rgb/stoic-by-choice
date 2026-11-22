@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Shared weight loss tracker for the Kilo Crew",
   "dependencies": {
-    "@netlify/blobs": "^11.1.9"
+    "@netlify/blobs": "^11.1.9",
+    "web-push": "^3.6.7"
   }
 }

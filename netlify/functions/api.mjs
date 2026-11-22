@@ -14,6 +14,7 @@ import crypto from "node:crypto";
 import { getStore } from "@netlify/blobs";
 import { JOURNAL_CHECKS, makeEngine, DEFAULT_CONFIG, DEFAULT_SETTINGS, AVATARS, PRIVATE_FIELDS, SEALED_FIELDS, finaleTime, normRecord, POINTS_VERSION, todaySA as realToday, addDays } from "../../public/core.js";
 import { FOOD_BY_ID } from "../../public/foods.js";
+import webpush from "web-push";
 
 const env = (k) => (globalThis.Netlify?.env?.get?.(k) ?? process.env[k] ?? "");
 // TEST_TODAY lets a test server pretend to be on another date. Never set it on the live site.
@@ -26,16 +27,18 @@ const SESSION_DAYS = 30;
 const SEED = {
   benadette: { name: "Benadette", sex: "f", before: 100.9, start: 70.9, goal: 62, age: 43 },
   thandi: { name: "Thandi", sex: "f", before: 118.5, start: 88.5, goal: 70 },
-  kgotso: { name: "Kgotso", sex: "m", before: 76.4, start: 52.8, goal: 45 },
+  kgotso: { name: "Kgotso", sex: "m", before: 76.4, start: 52.8, goal: 45, age: 10 },
   judith: { name: "Judith", sex: "f", before: 94.0, start: 77.6, goal: 60, age: 15 }, // ages from the printed eating plans
-  patrick: { name: "Patrick", sex: "m", before: 79.8, start: 64.4, goal: 50 },
+  patrick: { name: "Patrick", sex: "m", before: 79.8, start: 64.4, goal: 50, age: 13 }, // 13 years old: Junior plan
   thabo: { name: "Thabo", sex: "m", before: 116.3, start: 99.3, goal: 85 },
-  peter: { name: "Peter", sex: "m", before: 129.0, start: null, goal: 85 }, // Peter Kisembo, 23 Nov 2024 (no 14 Nov 2026 weight on record)
+  peter: { name: "Peter", sex: "m", before: 129.0, start: 143.0, goal: 85 },
+  // Under 18s (ages to be confirmed): the Junior plan applies.
+  limi: { name: "Limi", junior: true, age: 10 }, lichume: { name: "Lichume", junior: true, age: 13 }, lihlumelo: { name: "Lihlumelo", junior: true, age: 13 }, // Peter Kisembo, 23 Nov 2024 (no 14 Nov 2026 weight on record)
 };
 function seeded(m) {
   const x = SEED[m], r = normRecord({});
   if (!x) return r;
-  r.profile = { name: x.name, sex: x.sex, age: x.age || null, heightCm: null, startWeight: x.start, goalWeight: x.goal, activity: 1.375, rate: 0.5, kidPlan: "controlled", beforeWeight: x.before, beforeDate: "2024-11-23" };
+  r.profile = { name: x.name, sex: x.sex || "", junior: !!x.junior, age: x.age || null, heightCm: null, startWeight: x.start, goalWeight: x.goal, activity: 1.375, rate: 0.5, kidPlan: "controlled", beforeWeight: x.before, beforeDate: "2024-11-23" };
   r.weights = x.start ? [{ id: "start-2026-11-14", date: "2026-11-14", kg: x.start, verified: true }] : [];
   return r;
 }
@@ -132,8 +135,12 @@ async function buildState(viewer, { adminView = false } = {}) {
   await Promise.all(participants.map(async (p) => {
     const x = SEED[p.name.split(/\s+/)[0].toLowerCase()], r = records[p.memberId];
     if (!x || !r) return;
-    if (r.profile.beforeWeight && (r.profile.age || !x.age)) return;
-    if (!r.profile.beforeWeight) { r.profile.beforeWeight = x.before; r.profile.beforeDate = "2024-11-23"; }
+    const needStart = x.start && !r.weights.some((w) => w.verified && w.date <= "2026-11-14");
+    if (x.age && !r.profile.ageSeeded) { r.profile.age = x.age; r.profile.ageSeeded = true; await saveRecord(p.memberId, r); }
+    if (x.junior && !r.profile.junior) { r.profile.junior = true; r.profile.kidPlan = r.profile.kidPlan || "controlled"; await saveRecord(p.memberId, r); }
+    if ((r.profile.beforeWeight || !x.before) && (r.profile.age || !x.age) && !needStart) return;
+    if (needStart) { r.weights.push({ id: "start-2026-11-14", date: "2026-11-14", kg: x.start, verified: true }); r.profile.startWeight = x.start; }
+    if (!r.profile.beforeWeight && x.before) { r.profile.beforeWeight = x.before; r.profile.beforeDate = "2024-11-23"; }
     if (!r.profile.age && x.age) r.profile.age = x.age;
     if (!r.profile.startWeight && x.start) r.profile.startWeight = x.start;
     if (!r.profile.goalWeight && x.goal) r.profile.goalWeight = x.goal;
@@ -188,9 +195,21 @@ async function buildState(viewer, { adminView = false } = {}) {
     manualAwards: manualAwards.map((x) => ({ id: x.id, memberId: x.memberId, award: x.award, note: x.note, date: x.date })),
     announcements: announcements.filter((x) => (!x.until || x.until >= t) && (x.to === "all" || x.to === viewer.memberId)).slice(-10).reverse(),
   };
+  // Buddy and cheers (effort only: checked in or not, never weights).
+  {
+    const buddies = config.buddies || {}, cheers = (await getJ("_cheers")) || [], me = viewer.memberId, nameOf = (id) => (participants.find((p) => p.memberId === id) || {}).name || "";
+    const bid = me && buddies[me];
+    if (bid && records[bid]) out.buddy = { id: bid, name: nameOf(bid), checkedIn: engine.dayStatus(records[bid], t).any, points: Math.max(0, engine.dayPoints(records[bid], t)) };
+    out.cheers = { received: cheers.filter((c) => c.to === me && c.date === t).map((c) => ({ from: nameOf(c.from), emoji: c.emoji })), sent: cheers.filter((c) => c.from === me && c.date === t).map((c) => c.to) };
+    out.config.buddies = buddies;
+  }
+  const pushRec = await getJ("push/" + viewer.id);
+  out.push = { enabled: !!(pushRec && pushRec.subs && pushRec.subs.length), prefs: (pushRec && pushRec.prefs) || DEFAULT_PUSH_PREFS };
+  out.syncCodeSet = !!viewer.syncHash;
   if (isAdmin) {
     out.admin = {
       accounts: accounts.map(publicAccount), records: Object.fromEntries(Object.entries(records).map(([k, r]) => [k, { ...r, reflections: r.reflections.map((x) => ({ id: x.id, date: x.date })) }])), config, adjustments, announcements: announcements.slice().reverse(),
+      alerts: await safetyAlerts(engine, today),
       audit: ((await getJ("_audit")) || []).slice(-400).reverse(), seeds: Object.keys(SEED).map((k) => ({ id: k, name: SEED[k].name, linked: accounts.some((a) => a.memberId === k) })),
     };
   }
@@ -204,7 +223,8 @@ async function markJoined(memberId) {
 }
 
 // ---------- validation of participant entries ----------
-const TYPES = ["foods", "exercises", "weights", "treats", "tasks", "reflections", "challenges", "water", "sleep", "steps", "checkins"];
+const ABOUT_KEYS = ["favFoods", "favExercise", "biggestChallenge", "motivation", "support"];
+const TYPES = ["foods", "exercises", "weights", "treats", "tasks", "reflections", "challenges", "water", "sleep", "steps", "checkins", "measures", "routine"];
 function cleanEntry(type, e = {}, today) {
   const base = { id: str(e.id, 40) || rid(6), date: isDate(e.date) ? e.date : null };
   if (!base.date || base.date > today || base.date < "2026-11-01") throw httpErr(400, "That date cannot be used.");
@@ -235,6 +255,16 @@ function cleanFood(e, base, today) {
   }
 }
 function cleanOther(type, e, base, today) {
+  if (type === "routine") {
+    const kind = ["vitamin", "meditate", "write"].includes(e.kind) ? e.kind : null;
+    if (!kind) throw httpErr(400, "Unknown routine.");
+    return { ...base, kind };
+  }
+  if (type === "measures") {
+    const waistCm = num(e.waistCm, 40, 220), hipCm = num(e.hipCm, 40, 250);
+    if (!waistCm && !hipCm) throw httpErr(400, "Please enter your waist or hip measurement in cm.");
+    return { ...base, waistCm, hipCm, verified: false };
+  }
   if (type === "exercises") {
     const kcal = num(e.kcal, 0, 5000), minutes = num(e.minutes, 1, 600);
     if (kcal === null || minutes === null || !str(e.activity, 80)) throw httpErr(400, "Please enter the activity and minutes.");
@@ -334,8 +364,10 @@ async function handleData(req, body) {
       rate: [0.12, 0.25, 0.5, 0.75].includes(Number(p.rate)) ? Number(p.rate) : 0.5, kidPlan: p.kidPlan === "habits" ? "habits" : "controlled",
     };
     if (!r.profile.startWeight && num(p.startWeight, 20, 400)) r.profile.startWeight = num(p.startWeight, 20, 400); // only the first time
+    for (const k of ABOUT_KEYS) if (k in p) r.profile[k] = str(p[k], 200);
   } else if (body.action === "add" && TYPES.includes(body.type)) {
     const e = cleanEntry(body.type, body.entry, today);
+    if (body.type === "routine") r.routine = (r.routine || []).filter((x) => !(x.date === e.date && x.kind === e.kind));
     // Honesty rule: entries can only be made for today (South African time). No back dating, no future dates.
     if (e.date !== today) throw httpErr(400, "You can only log things for today. Missed days cannot be filled in afterwards.");
     if (body.type === "treats") {
@@ -351,6 +383,17 @@ async function handleData(req, body) {
     if (body.type === "challenges") r.challenges = r.challenges.filter((x) => !(x.date === e.date && x.challengeId === e.challengeId));
     r[body.type].push(e);
     r[body.type] = r[body.type].slice(-5000);
+  } else if (body.action === "cheer") {
+    const to = str(body.to, 40), cheers = (await getJ("_cheers")) || [];
+    if (!to || to === acct.memberId) throw httpErr(400, "Choose someone to cheer.");
+    if (cheers.some((c) => c.from === acct.memberId && c.to === to && c.date === today)) throw httpErr(400, "You already cheered them today.");
+    cheers.push({ from: acct.memberId, to, date: today, emoji: ["👏🏾", "💪🏾", "🔥", "🌟"].includes(body.emoji) ? body.emoji : "👏🏾", at: new Date().toISOString() });
+    await setJ("_cheers", cheers.slice(-3000));
+    return json(await buildState(acct));
+  } else if (body.action === "syncCode") {
+    // Personal code for the iPhone step sync shortcut. Only a hash is stored; the code is shown once.
+    const code = rid(9); acct.syncHash = sha(code); await saveAccount(acct);
+    return json({ ...(await buildState(acct)), syncCode: code });
   } else if (body.action === "addMany" && body.type === "foods" && Array.isArray(body.entries) && body.entries.length && body.entries.length <= 8) {
     // One tap plan meal: the protein and its vegetables are saved together.
     const label = str(body.planLabel, 60);
@@ -390,6 +433,19 @@ async function handleAdmin(req, body) {
       await setJ(k, v); n++;
     }
     await log("restored a backup", { detail: `${n} items from ${d.created}` });
+  } else if (a === "buddies") {
+    const pairs = Array.isArray(body.pairs) ? body.pairs : [], map = {};
+    for (const [x, y] of pairs) { if (x && y && x !== y) { map[x] = y; map[y] = x; } }
+    const cur = (await getJ("_config")) || {}; cur.buddies = map; await setJ("_config", cur);
+    await log("set buddy pairs", { detail: `${Object.keys(map).length / 2} pairs` });
+  } else if (a === "backups") {
+    const { blobs } = await db().list({ prefix: "backup/" });
+    return json({ ...(await buildState(admin, { adminView: true })), backups: blobs.map((b) => b.key.slice(7)).sort().reverse() });
+  } else if (a === "restoreSnapshot") {
+    const snap = await getJ("backup/" + str(body.date, 10));
+    if (!snap || !snap.data) throw httpErr(404, "That daily backup was not found.");
+    let n = 0; for (const [k, v] of Object.entries(snap.data)) { if (k === "_audit" || !/^(acct\/|member\/|_)/.test(k)) continue; await setJ(k, v); n++; }
+    await log("restored a daily backup", { detail: `${n} items from ${body.date}` });
   } else if (a === "view") { await log("viewed admin centre and health data"); return json(await buildState(admin, { adminView: true })); }
   else if (a === "approve") {
     const x = await acctFor(body.accountId);
@@ -486,7 +542,11 @@ async function handleAdmin(req, body) {
       const kg = num(e.kg, 20, 400); if (!kg || !e.memberId) continue;
       const r = await getRecord(e.memberId);
       if (!date) { r.profile.startWeight = kg; r.weights = r.weights.filter((w) => w.date !== "2026-11-14"); r.weights.push({ id: "start-2026-11-14", date: "2026-11-14", kg, verified: true }); }
-      else { r.weights = r.weights.filter((w) => w.date !== date); r.weights.push({ id: rid(6), date, kg, verified: true }); }
+      else {
+        r.weights = r.weights.filter((w) => w.date !== date); r.weights.push({ id: rid(6), date, kg, verified: true });
+        const waistCm = num(e.waistCm, 40, 220), hipCm = num(e.hipCm, 40, 250);
+        if (waistCm || hipCm) { r.measures = (r.measures || []).filter((m) => !(m.date === date && m.verified)); r.measures.push({ id: rid(6), date, waistCm, hipCm, verified: true }); }
+      }
       await saveRecord(e.memberId, r); n++;
     }
     await log("recorded group weigh in", { detail: `${n} weights for ${date || "starting weights"}` });
@@ -494,9 +554,103 @@ async function handleAdmin(req, body) {
     const r = await getRecord(str(body.memberId, 40)), p = body.profile || {};
     for (const k of ["startWeight", "goalWeight", "beforeWeight"]) if (k in p) r.profile[k] = num(p[k], 10, 400);
     if ("heightCm" in p) r.profile.heightCm = num(p.heightCm, 90, 230);
+    if ("age" in p) r.profile.age = num(p.age, 5, 100);
+    if ("junior" in p) r.profile.junior = !!p.junior;
+    if ("sex" in p) r.profile.sex = p.sex === "m" ? "m" : "f";
+    for (const k of [...ABOUT_KEYS, "adminNote"]) if (k in p) r.profile[k] = str(p[k], k === "adminNote" ? 500 : 200);
+    if (p.waistCm || p.hipCm) { const t = todaySA(); r.measures = (r.measures || []).filter((m) => !(m.date === t && m.verified)); r.measures.push({ id: rid(6), date: t, waistCm: num(p.waistCm, 40, 220), hipCm: num(p.hipCm, 40, 250), verified: true }); }
     await saveRecord(str(body.memberId, 40), r); await log("corrected participant record", { target: body.memberId, detail: JSON.stringify(p) });
   } else throw httpErr(400, "Unknown admin action.");
   return json(await buildState(admin, { adminView: true }));
+}
+
+// ---------- reminders (web push) ----------
+// The keys for signing notifications are made once and kept in the private store, so no extra setup is needed.
+const DEFAULT_PUSH_PREFS = { meals: true, water: true, night: true, weighin: true, nudge: true, vitamin: true, meditate: true, journal: true, alerts: true };
+const cleanPrefs = (p) => Object.fromEntries(Object.keys(DEFAULT_PUSH_PREFS).map((k) => [k, p[k] !== false]));
+async function vapid() {
+  let v = await getJ("_vapid");
+  if (!v) { v = webpush.generateVAPIDKeys(); await setJ("_vapid", v); }
+  return v;
+}
+async function sendPush(accountId, rec, payload) {
+  const v = await vapid();
+  if (env("PUSH_DRY_RUN")) { console.log("PUSH", accountId, JSON.stringify(payload)); return 1; }
+  webpush.setVapidDetails("mailto:noreply@stoicbychoice.app", v.publicKey, v.privateKey);
+  let ok = 0; const keep = [];
+  for (const sub of rec.subs) {
+    try { await webpush.sendNotification(sub, JSON.stringify(payload), { TTL: 3600 }); ok++; keep.push(sub); }
+    catch (e) { if (e.statusCode !== 404 && e.statusCode !== 410) keep.push(sub); }
+  }
+  if (keep.length !== rec.subs.length) { rec.subs = keep; await setJ("push/" + accountId, rec); }
+  return ok;
+}
+const saTime = () => new Date().toLocaleTimeString("en-GB", { timeZone: "Africa/Johannesburg", hour: "2-digit", minute: "2-digit", hour12: false });
+const mins = (hm) => +hm.slice(0, 2) * 60 + +hm.slice(3, 5);
+/** Runs every 15 minutes (netlify/functions/reminders.mjs): sends due reminders and makes the daily backup. */
+export async function runScheduled(nowHM = env("TEST_TIME") || saTime()) {
+  const today = todaySA(), now = mins(nowHM), due = (hm) => now >= mins(hm) && now < mins(hm) + 15;
+  const [settings, config] = [await getSettings(), await getConfig()];
+  const engine = makeEngine({ settings: () => settings, config: () => config, today: () => today, challengeDefs: () => [], adjustments: () => [] });
+  const out = { sent: [], backup: null };
+  // Daily automatic backup at 02:00, keeping the last 30 days.
+  if (due("02:00")) {
+    const { blobs } = await db().list(), data = {};
+    for (const b of blobs) if (!/^(rl\/|code\/|backup\/|push\/)/.test(b.key)) data[b.key] = await getJ(b.key);
+    await setJ("backup/" + today, { app: "stoic-by-choice", version: 1, created: new Date().toISOString(), data });
+    const { blobs: old } = await db().list({ prefix: "backup/" });
+    for (const b of old.map((x) => x.key).sort().slice(0, -30)) await db().delete(b);
+    out.backup = today;
+  }
+  if (today < settings.start) return out;
+  const { blobs } = await db().list({ prefix: "push/" });
+  const wd = engine.isWeighDay(addDays(today, 1));
+  for (const b of blobs) {
+    const id = b.key.slice(5), rec = await getJ(b.key); if (!rec || !rec.subs || !rec.subs.length) continue;
+    const prefs = { ...DEFAULT_PUSH_PREFS, ...(rec.prefs || {}) }, sent = (rec.sent && rec.sent[today]) || [];
+    const send = async (key, title, body, url = "/") => { if (sent.includes(key)) return; if (await sendPush(id, rec, { title, body, url })) { sent.push(key); out.sent.push([rec.name, key]); } };
+    const r = rec.memberId ? await getRecord(rec.memberId) : null;
+    if (r) {
+      const ea = engine.eating(r, today), slots = new Set(r.foods.filter((f) => f.date === today).map((f) => ({ Breakfast: 1, "Meal 1": 1, Lunch: 2, "Meal 2": 2, Dinner: 3, "Meal 3": 3 })[f.meal]).filter(Boolean));
+      const g = engine.glasses(r, today), wt = engine.waterTarget(), any = engine.dayStatus(r, today).any;
+      if (prefs.meals) {
+        if (due("08:00") && !slots.has(1)) await send("m1", "🌅 Breakfast", "Log your breakfast (Meal 1) with the time you ate it.", "/#food");
+        if (due("13:00") && !slots.has(2)) await send("m2", "☀️ Lunch", "Log your lunch (Meal 2). About 5 hours after breakfast.", "/#food");
+        if (due("18:30") && !slots.has(3)) await send("m3", "🌙 Dinner", "Log your dinner (Meal 3). Last meal before 9 PM.", "/#food");
+      }
+      if (prefs.water) for (const [hm, part] of [["10:30", 2], ["14:30", 4], ["17:30", 6]]) if (due(hm) && g < part) await send("w" + hm, "🥛 Water", `${g} of ${wt} glasses so far. Time for a glass (250 ml).`, "/#water");
+      if (prefs.night && due("20:15") && ea.meals < 3) await send("night", "🕘 Last meal before 9 PM", `You have logged ${ea.meals} of 3 meals. Eat and log dinner before 9 PM.`, "/#food");
+      if (prefs.nudge && due("20:00") && !any) await send("nudge", "👋🏾 Check in today", "Nothing logged yet today. A day with nothing logged costs 10 points at midnight.", "/");
+      const done = (k) => (r.routine || []).some((x) => x.date === today && x.kind === k);
+      const vit = done("vitamin") || r.foods.some((f) => f.date === today && /^(centrum|vitamins|vitc)$/.test(f.foodId || ""));
+      if (prefs.vitamin && due("08:30") && !vit) await send("vit", "💊 Vitamin time", "Take your Centrum (or daily vitamin) with breakfast and tick it in the app.", "/");
+      if (prefs.meditate && due("12:30") && !done("meditate")) await send("med", "🧘🏾 5 minute pause", "Take 5 minutes: sit still, breathe slowly, notice what is in your control.", "/");
+      if (prefs.journal && due("21:00") && !done("write")) await send("write", "✍🏾 Quick journal", "Write a few lines about anything today, on paper or in the app. Then tick it.", "/");
+      if (prefs.weighin && wd && due("19:00")) await send("weighin", "⚖️ Weigh in tomorrow", "Official weigh in tomorrow morning. Drink your water and sleep well tonight.", "/");
+    }
+    if (rec.role === "admin" && prefs.alerts && due("08:00")) {
+      const alerts = await safetyAlerts(engine, today);
+      if (alerts.length) await send("alerts", "🛡️ Safety alerts", alerts.slice(0, 3).map((x) => x.text).join(" · "), "/#admin");
+    }
+    rec.sent = { [today]: sent }; await setJ(b.key, rec);
+  }
+  return out;
+}
+/** Private alerts for the administrator: under 18s eating too little, losing too fast, or anyone not logging. */
+async function safetyAlerts(engine, today) {
+  const accounts = (await listAccounts()).filter((a) => a.status === "active" && a.memberId), out = [];
+  for (const a of accounts) {
+    const r = await getRecord(a.memberId), name = a.name.split(" ")[0];
+    const y1 = addDays(today, -1), y2 = addDays(today, -2), y3 = addDays(today, -3);
+    if (engine.isMinor(r)) {
+      const low = [y1, y2].filter((d) => { const e = engine.eating(r, d); return e.kcal > 0 && e.kcal < 1200; });
+      if (low.length === 2) out.push({ level: "high", who: name, text: `${name} (under 18) ate under 1 200 kcal on 2 days in a row` });
+    }
+    const wv = r.weights.filter((w) => w.verified).sort((x, y) => x.date.localeCompare(y.date));
+    if (wv.length >= 2) { const [p, c] = wv.slice(-2), weeks = Math.max(1, (new Date(c.date) - new Date(p.date)) / 6048e5), rate = (p.kg - c.kg) / weeks; if (rate > engine.maxRate(r) + 0.05) out.push({ level: "high", who: name, text: `${name} lost ${rate.toFixed(1)} kg a week (safe pace ${engine.maxRate(r)} kg)` }); }
+    if (r.profile.joinedDate && r.profile.joinedDate <= y3 && ![y1, y2, y3].some((d) => engine.dayStatus(r, d).any)) out.push({ level: "medium", who: name, text: `${name} has not logged for 3 days` });
+  }
+  return out;
 }
 
 export default async (req) => {
@@ -512,6 +666,56 @@ export default async (req) => {
     }
     if (path === "data" && req.method === "POST") return await handleData(req, body);
     if (path === "admin" && req.method === "POST") return await handleAdmin(req, body);
+    if (path === "push/key" && req.method === "GET") return json({ publicKey: (await vapid()).publicKey });
+    if (path === "push/subscribe" && req.method === "POST") {
+      const acct = await requireSession(req), sub = body.subscription;
+      if (!sub || typeof sub.endpoint !== "string" || !/^https:\/\//.test(sub.endpoint)) throw httpErr(400, "Notifications could not be turned on on this phone.");
+      const rec = (await getJ("push/" + acct.id)) || { subs: [], prefs: DEFAULT_PUSH_PREFS, sent: {} };
+      rec.subs = [...rec.subs.filter((x) => x.endpoint !== sub.endpoint), { endpoint: sub.endpoint, keys: sub.keys || {} }].slice(-4);
+      if (body.prefs) rec.prefs = cleanPrefs(body.prefs);
+      rec.memberId = acct.memberId; rec.role = acct.role; rec.name = acct.name;
+      await setJ("push/" + acct.id, rec);
+      return json({ ok: true, prefs: rec.prefs });
+    }
+    if (path === "push/prefs" && req.method === "POST") {
+      const acct = await requireSession(req), rec = (await getJ("push/" + acct.id)) || { subs: [], sent: {} };
+      rec.prefs = cleanPrefs(body.prefs || {}); await setJ("push/" + acct.id, rec); return json({ ok: true, prefs: rec.prefs });
+    }
+    if (path === "push/off" && req.method === "POST") { const acct = await requireSession(req); await db().delete("push/" + acct.id); return json({ ok: true }); }
+    if (path === "push/test" && req.method === "POST") {
+      const acct = await requireSession(req), rec = await getJ("push/" + acct.id);
+      if (!rec || !rec.subs.length) throw httpErr(400, "Turn on reminders first.");
+      await sendPush(acct.id, rec, { title: "Stoic by Choice", body: "✅ Reminders are working on this phone.", url: "/" });
+      return json({ ok: true });
+    }
+    if (path === "scan/memory" && req.method === "GET") {
+      const acct = await requireSession(req); if (!acct.memberId) return json({ items: [] });
+      return json({ items: ((await getJ("scan/" + acct.memberId)) || []).map((x) => ({ label: x.label, vec: x.vec })) });
+    }
+    if (path === "scan/learn" && req.method === "POST") {
+      // Personal food scanner memory: image features (numbers, never the photo) with the food the person chose.
+      const acct = await requireSession(req); if (!acct.memberId) throw httpErr(403, "Please join first.");
+      const l = body.label || {}, vec = str(body.vec, 6000);
+      if (!/^[A-Za-z0-9+/=]{100,}$/.test(vec)) throw httpErr(400, "Scan data was not valid.");
+      const label = { type: ["food", "plan", "custom"].includes(l.type) ? l.type : "food", id: str(l.id, 40), name: str(l.name, 80), kcal: num(l.kcal, 0, 5000) || 0, amount: num(l.amount, 0, 2000), qty: num(l.qty, 0, 5) };
+      if (label.type === "food" && !FOOD_BY_ID[label.id]) throw httpErr(400, "Unknown food.");
+      const list = (await getJ("scan/" + acct.memberId)) || [];
+      list.push({ label, vec, at: new Date().toISOString() });
+      await setJ("scan/" + acct.memberId, list.slice(-80));
+      return json({ ok: true, count: Math.min(80, list.length) });
+    }
+    if (path === "steps-sync" && req.method === "POST") {
+      // Used by the iPhone Shortcut: { code, steps }. Saves today's step total for the owner of the code.
+      await rateLimit("sync:" + clientIp(req), 30, 60);
+      const code = str(body.code, 40), steps = Math.round(Number(String(body.steps).replace(/[^\d.]/g, "")));
+      if (!code || !(steps >= 0 && steps <= 100000)) throw httpErr(400, "Send a valid code and step count.");
+      const acct = (await listAccounts()).find((a) => a.syncHash && a.syncHash === sha(code) && a.status === "active" && a.memberId);
+      if (!acct) throw httpErr(403, "Unknown sync code. Make a new one in the app (Progress, Step sync).");
+      const r = await getRecord(acct.memberId), today = todaySA();
+      r.steps = r.steps.filter((x) => x.date !== today); r.steps.push({ id: rid(6), date: today, steps, source: "shortcut" });
+      await markJoined(acct.memberId); await saveRecord(acct.memberId, r);
+      return json({ ok: true, message: `Saved ${steps} steps for today.` });
+    }
     if (path === "public" && req.method === "GET") { const c = await getConfig(); return json({ settings: await getSettings(), rulesText: c.rulesText, privacyText: c.privacyText, avatars: AVATARS }); }
     return json({ error: "Not found" }, 404);
   } catch (e) {
