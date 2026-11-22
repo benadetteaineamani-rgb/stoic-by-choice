@@ -105,7 +105,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     session: store.get("sbc_session", null), account: null, pending: false,
     me: null, tab: "today", date: todaySA(), online: false, lastSync: null, busy: false, tipShift: 0, quoteShift: 0,
     calc: { kg: null, deficit: 500 }, settings: null, config: null, participants: [], summaries: {}, results: null,
-    myRecord: null, challenges: [], manualAwards: [], announcements: [], aggregates: null, admin: null, adminTab: "dashboard",
+    myRecord: null, challenges: [], manualAwards: [], announcements: [], inbox: [], myFeedback: [], feedbackAreas: [], myChildren: [], aggregates: null, admin: null, adminTab: "dashboard",
     authStep: null, boardMode: "week",
   };
 
@@ -158,6 +158,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     state.challenges = data.challenges || [];
     state.manualAwards = data.manualAwards || [];
     state.announcements = data.announcements || [];
+    state.inbox = data.inbox || []; state.myFeedback = data.myFeedback || []; state.feedbackAreas = data.feedbackAreas || []; state.myChildren = data.myChildren || [];
     state.aggregates = data.aggregates || null;
     state.buddy = data.buddy || null; state.cheers = data.cheers || { received: [], sent: [] }; state.push = data.push || null; state.syncCodeSet = !!data.syncCodeSet;
     state.finale = data.finale || state.finale || { revealed: false, revealAt: null };
@@ -173,7 +174,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     if (!state.session) { setSync("🔒 Secure sign in"); if (initial) render(); return; }
     try {
       const data = await api("state");
-      const key = () => JSON.stringify([state.summaries, state.myRecord, state.settings, state.announcements, state.pending, state.challenges, state.manualAwards]);
+      const key = () => JSON.stringify([state.summaries, state.myRecord, state.settings, state.announcements, state.inbox, state.myFeedback, state.myChildren, state.pending, state.challenges, state.manualAwards]);
       const before = key();
       applyState(data); setSync();
       if (initial || key() !== before) safeRender();
@@ -308,6 +309,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
       <div class="form" style="margin-top:14px">
         <button class="btn ghost full" data-m="avatar">🎭 Change my avatar</button>
         <button class="btn ghost full" data-m="pin">🔢 Change my PIN</button>
+        <button class="btn ghost full" data-m="feedback">💡 Send ideas or feedback</button>
         <button class="btn ghost full" data-m="rules">📜 Challenge rules and privacy policy</button>
         <button class="btn ghost full" data-m="signout">🚪 Sign out</button>
         <button class="btn full" data-m="close">Close</button>
@@ -318,6 +320,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
       if (k === "avatar") return changeAvatar();
       if (k === "pin") return changePin();
       if (k === "rules") return showRules();
+      if (k === "feedback") { closeModal(); go("inbox"); setTimeout(() => { $("#feedback")?.scrollIntoView({ behavior: "smooth" }); $("#fbMsg")?.focus(); }, 150); return; }
       if (k === "signout") return signOut();
     }));
   }
@@ -473,13 +476,14 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     const cd = challengeDay();
     $("#dateline").textContent = `${fmtDate(todayStr())}${holiday(todayStr()) ? " 🇿🇦 " + holiday(todayStr()) : ""} · ` + (cd.phase === "on" ? `Day ${cd.day} of ${cd.total} · ${(() => { const t = todayStr(), w = challengeWeeks(), m = challengeMonths(), cw = w.find((x) => x.w0 <= t && t <= x.w1), cm = m.find((x) => x.from <= t && t <= x.to); return `Week ${cw ? cw.n : "–"} of ${w.length} · Month ${cm ? cm.n : "–"} of ${m.length}`; })()} · ${cd.left} days to go` : cd.phase === "before" ? `Challenge starts in ${cd.toStart} day${cd.toStart === 1 ? "" : "s"}` : "Challenge complete 🏁");
     const a = state.account, signedIn = !!(state.session && a);
+    { const ib = $("#inboxBtn"), n = signedIn && !state.pending ? unreadCount() : 0; ib.hidden = !(signedIn && !state.pending); ib.classList.toggle("on", state.tab === "inbox"); $("#inboxBadge").hidden = !n; $("#inboxBadge").textContent = n > 9 ? "9+" : n; ib.setAttribute("aria-label", n ? `Inbox, ${n} unread` : "Inbox"); }
     $("#whoBtn").innerHTML = signedIn ? `${avatarImg(a.avatar)}${esc(a.name.split(" ")[0])} ▾` : "🔒 Sign in";
     document.body.classList.toggle("authed", signedIn && !state.pending);
     $("#tabAdmin").hidden = !(signedIn && a.role === "admin" && !state.pending);
     $$("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === state.tab));
     if (!signedIn) { $("#view").innerHTML = viewAuth(); bindAuth(); return; }
     if (state.pending || !state.me) { $("#view").innerHTML = viewPending(); bindAuth(); return; }
-    const views = { today: viewToday, challenge: viewChallenge, log: () => ({ move: viewMove, water: viewWater, sleep: viewSleep, journal: viewJournal }[state.logMode] || viewFood)(), food: viewFood, move: viewMove, board: viewBoard, awards: viewAwards, calendar: viewCalendar, profile: viewProfile, recipes: viewRecipes, calc: viewCalc, me: viewMe, admin: viewAdmin };
+    const views = { today: viewToday, challenge: viewChallenge, log: () => ({ move: viewMove, water: viewWater, sleep: viewSleep, journal: viewJournal }[state.logMode] || viewFood)(), food: viewFood, move: viewMove, board: viewBoard, awards: viewAwards, calendar: viewCalendar, profile: viewProfile, recipes: viewRecipes, inbox: viewInbox, calc: viewCalc, me: viewMe, admin: viewAdmin };
     if (state.tab === "admin" && a.role !== "admin") state.tab = "today";
     const canBack = state.tab !== "today" || navStack.length > 0, canFwd = fwdStack.length > 0;
     $("#view").innerHTML = (canBack || canFwd ? `<div class="navrow"><button class="backbtn" data-back ${canBack ? "" : "disabled"}>‹ Back</button><button class="backbtn fwd" data-fwd ${canFwd ? "" : "disabled"}>Forward ›</button></div>` : "") + (views[state.tab] || viewToday)();
@@ -518,10 +522,52 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
       <button class="linkbtn" data-act="nextQuote">Another thought ›</button></section>`;
   }
 
+  // Inbox: messages and announcements from the administrator. "Read" is remembered on this phone.
+  const SENDER = "Dr Benadette Aineamani, Stoic Teacher";
+  const seenKey = () => "sbc_inbox_seen_" + (state.me || "x");
+  function seenIds() { try { return new Set(JSON.parse(localStorage.getItem(seenKey()) || "[]")); } catch { return new Set(); } }
+  function markSeen(ids) { const s = seenIds(); ids.forEach((i) => s.add(i)); try { localStorage.setItem(seenKey(), JSON.stringify([...s].slice(-300))); } catch {} }
+  function unreadCount() { const s = seenIds(); return state.inbox.filter((x) => !s.has(x.id)).length; }
+  function viewInbox() {
+    const seen = seenIds(), list = state.inbox;
+    setTimeout(() => { markSeen(list.map((x) => x.id)); const bd = $("#inboxBadge"); if (bd) bd.hidden = true; }, 0);
+    return `<section class="card"><h2>📥 Inbox</h2><p class="note" style="margin-top:0">Messages and announcements from ${esc(SENDER)}. Newest first.</p>
+      ${list.length ? `<div class="inbox">${list.map((x) => `<article class="msg ${seen.has(x.id) ? "" : "new"}">
+        <div class="msghead"><span class="pill">${x.to === "all" ? "📣 Everyone" : "✉️ Just for you"}</span>${seen.has(x.id) ? "" : `<span class="pill newpill">New</span>`}<span class="msgdate">${fmtDate(x.date)}${x.time ? " · " + esc(x.time) : ""}</span></div>
+        ${x.title ? `<h3>${esc(x.title)}</h3>` : ""}<div class="msgbody">${esc(x.message).replace(/\n/g, "<br>")}</div><div class="msgby">From ${esc(x.by)}</div></article>`).join("")}</div>`
+        : `<div class="empty">No messages yet. Announcements from the administrator will appear here.</div>`}</section>${feedbackCard()}`;
+  }
+  const FB_STATUS = { new: ["📨", "Sent"], seen: ["👀", "Seen by admin"], planned: ["🛠️", "Planned"], done: ["✅", "Done"], "not now": ["⏸️", "Not for now"] };
+  function feedbackCard() {
+    if (!state.me) return "";
+    return `<section class="card" id="feedback"><h2>💡 Ideas and feedback for the administrator</h2>
+      <p class="note" style="margin-top:0">Tell Dr Benadette Aineamani, Stoic Teacher, what would make the app better or what is hard to use. Only she sees this.</p>
+      <form class="form" id="fbForm"><label>About<select id="fbArea">${(state.feedbackAreas.length ? state.feedbackAreas : ["Other"]).map((a) => `<option>${esc(a)}</option>`).join("")}</select></label>
+        <label>Your idea or feedback<textarea id="fbMsg" rows="4" maxlength="800" required placeholder="e.g. Please add a button to log the same lunch as yesterday."></textarea></label>
+        <button class="btn full">📨 Send to the administrator</button></form>
+      ${state.myFeedback.length ? `<h3 style="margin:16px 0 8px">What I sent</h3><div class="inbox">${state.myFeedback.map((f) => `<article class="msg"><div class="msghead"><span class="pill">${esc(f.area)}</span><span class="pill">${FB_STATUS[f.status]?.[0] || "📨"} ${FB_STATUS[f.status]?.[1] || "Sent"}</span><span class="msgdate">${shortDate(f.date)}</span></div>
+        <div class="msgbody">${esc(f.message).replace(/\n/g, "<br>")}</div>${f.reply ? `<div class="fbreply"><b>Reply:</b> ${esc(f.reply).replace(/\n/g, "<br>")}</div>` : ""}</article>`).join("")}</div>` : ""}
+    </section>`;
+  }
+  // Parents: their children's habits from the app logs (today so far, and yesterday in full).
+  function childrenCard() {
+    const kids = state.myChildren || []; if (!kids.length) return "";
+    const day = state.kidDay || "today";
+    const block = (c) => { const x = c[day], n = x.flags.length;
+      return `<details class="kid" ${n ? "open" : ""}><summary><b>${esc(x.name)}</b><span class="pill ${n ? "warn" : "good"}">${n ? `⚠️ ${n} flag${n === 1 ? "" : "s"}` : "✅ No flags"}</span></summary>
+        ${x.flags.map((f) => `<div class="kidflag">⚠️ <b>${esc(f.label)}</b><br><small>${esc(f.how)}</small></div>`).join("")}
+        ${x.good.length ? `<div class="kidgood">✅ ${day === "today" ? "" : "Well done: "}${esc(x.good.join(", "))}</div>` : ""}${x.note ? `<div class="kidflag muted">${esc(x.note)}</div>` : ""}</details>`; };
+    return `<section class="card kids"><h2>👨‍👩‍👧 My children's habits</h2>
+      <p class="note" style="margin-top:0">From what they log in the app. ${day === "today" ? "Today so far: only bad eating habits are flagged until the day is over." : "Yesterday, the full day: meals, eating habits, water, movement and sleep."} A kind word helps more than a telling off.</p>
+      <div class="seg">${[["today", "Today so far"], ["yesterday", "Yesterday"]].map(([k, l]) => `<button type="button" class="${k === day ? "on" : ""}" data-kidday="${k}">${l}</button>`).join("")}</div>
+      ${kids.map(block).join("")}</section>`;
+  }
   function announcementsCard() {
-    if (!state.announcements.length) return "";
-    return state.announcements.slice(0, 1).map((x) => `<section class="card announce"><div class="label">📣 ${x.to === "all" ? "From the administrator" : "A message for you"} · ${shortDate(x.date)}</div>
-      ${x.title ? `<h3>${esc(x.title)}</h3>` : ""}<div>${esc(x.message).replace(/\n/g, "<br>")}</div></section>`).join("");
+    const n = unreadCount();
+    if (!state.announcements.length) return n ? `<section class="card announce"><button class="btn ghost full" data-go="inbox">📥 You have ${n} unread message${n === 1 ? "" : "s"}: open inbox</button></section>` : "";
+    return state.announcements.slice(0, 1).map((x) => `<section class="card announce"><div class="label">📣 ${x.to === "all" ? "From " + esc(SENDER) : "A message for you from " + esc(SENDER)} · ${shortDate(x.date)}</div>
+      ${x.title ? `<h3>${esc(x.title)}</h3>` : ""}<div>${esc(x.message).replace(/\n/g, "<br>")}</div>
+      <button class="btn ghost full" style="margin-top:10px" data-go="inbox">📥 Open inbox${n ? ` (${n} unread)` : ""}</button></section>`).join("");
   }
   function challengeCard() {
     const a = state.account, sc = score(state.me), cw = currentWeek(), r = rec(state.me);
@@ -872,6 +918,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
       ${habitsCard()}
       ${homeScreen()}
       ${announcementsCard()}
+      ${childrenCard()}
       ${stoicCard()}`;
   }
 
@@ -1662,7 +1709,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
   }
 
   // ---------- Reminders (phone notifications) ----------
-  const PUSH_LABELS = { vitamin: "💊 Take your Centrum (08:30, if not ticked)", meditate: "🧘🏾 5 minute meditation (12:30)", journal: "✍🏾 Quick journal write up (21:00)", meals: "🍽️ Meal reminders (08:00, 13:00, 18:30, only if not logged)", water: "🥛 Water reminders (10:30, 14:30, 17:30, if behind)", night: "🕘 Last meal before 9 PM (20:15)", nudge: "👋🏾 Nothing logged today (20:00)", weighin: "⚖️ Weigh in tomorrow (Friday evening)", alerts: "🛡️ Safety alerts for the administrator (08:00)" };
+  const PUSH_LABELS = { messages: "📣 Messages and announcements from the administrator", vitamin: "💊 Take your Centrum (08:30, if not ticked)", meditate: "🧘🏾 5 minute meditation (12:30)", journal: "✍🏾 Quick journal write up (21:00)", meals: "🍽️ Meal reminders (08:00, 13:00, 18:30, only if not logged)", water: "🥛 Water reminders (10:30, 14:30, 17:30, if behind)", night: "🕘 Last meal before 9 PM (20:15)", nudge: "👋🏾 Nothing logged today (20:00)", weighin: "⚖️ Weigh in tomorrow (Friday evening)", alerts: "🛡️ Safety alerts for the administrator (08:00)" };
   function remindersCard() {
     const supported = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
     const on = state.push && state.push.enabled, prefs = (state.push && state.push.prefs) || {};
@@ -2101,7 +2148,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
   // Admin Control Centre (administrators only; needs PIN + email code)
   // =====================================================================
   const ADMIN_TABS = [["dashboard", "🏠", "Dashboard"], ["participants", "👥", "Participants"], ["profiles", "📝", "Participant details"], ["challenges", "🎯", "Challenges"], ["scoring", "🏆", "Leaderboard & scoring"],
-    ["awards", "🎖️", "Awards & badges"], ["progress", "📈", "Progress"], ["comms", "✉️", "Communications"], ["reports", "📊", "Reports"], ["settings", "⚙️", "Settings"], ["audit", "📜", "Audit log"]];
+    ["awards", "🎖️", "Awards & badges"], ["progress", "📈", "Progress"], ["comms", "✉️", "Communications"], ["feedback", "💡", "Feedback"], ["reports", "📊", "Reports"], ["settings", "⚙️", "Settings"], ["audit", "📜", "Audit log"]];
   const statusPill = (s) => `<span class="pill ${s === "active" ? "good" : s === "pending" ? "" : "warn"}">${esc(s)}</span>`;
   const memberOptions = (sel = "") => MEMBERS.map((m) => `<option value="${m.id}" ${m.id === sel ? "selected" : ""}>${esc(m.name)}</option>`).join("");
 
@@ -2109,9 +2156,9 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     const A = state.admin;
     if (!A) return `<section class="card"><h2>Admin Control Centre</h2><p class="muted">Loading…</p></section>`;
     const t = state.adminTab;
-    const body = { dashboard: admDashboard, participants: admParticipants, profiles: admProfiles, challenges: admChallenges, scoring: admScoring, awards: admAwards, progress: admProgress, comms: admComms, reports: admReports, settings: admSettings, audit: admAudit }[t]();
+    const body = { dashboard: admDashboard, participants: admParticipants, profiles: admProfiles, challenges: admChallenges, scoring: admScoring, awards: admAwards, progress: admProgress, comms: admComms, feedback: admFeedback, reports: admReports, settings: admSettings, audit: admAudit }[t]();
     return `<section class="card admin-head"><div class="row"><img src="img/avatars/navigator.webp" class="av lg" alt=""><div><div class="brand">Stoic by Choice</div><div class="brand-sub">Admin Control Centre</div></div></div>
-      <div class="admtabs">${ADMIN_TABS.map(([k, i, l]) => `<button class="${k === t ? "on" : ""}" data-adm="${k}">${i} ${l}</button>`).join("")}</div></section>${body}`;
+      <div class="admtabs">${ADMIN_TABS.map(([k, i, l]) => { const n = k === "feedback" ? (A.feedback || []).filter((f) => f.status === "new").length : 0; return `<button class="${k === t ? "on" : ""}" data-adm="${k}">${i} ${l}${n ? ` <span class="pill newpill">${n}</span>` : ""}</button>`; }).join("")}</div></section>${body}`;
   }
 
   function admDashboard() {
@@ -2225,7 +2272,36 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
         <label>Show until (optional)<input id="annUntil" type="date"></label>
         <div class="chips">${["Remember: official weigh in this Saturday! ⚖️", "Proud of every one of you this week. Keep going! 🔥", "Hydration challenge: 8 glasses today 🥛", "Missed a day? The obstacle is the way. Start again today."].map((x) => `<button type="button" class="chip" data-tpl="${esc(x)}">${esc(x)}</button>`).join("")}</div>
         <button class="btn full">Send</button></form></section>
+      ${admParents()}
       <section class="card"><h2>Sent messages</h2><div class="list">${(state.admin.announcements || []).map((x) => `<div class="item"><div class="grow"><div class="t">${esc(x.title || "Announcement")} <span class="pill">${x.to === "all" ? "everyone" : esc(nameOf(x.to))}</span></div><div class="s">${shortDate(x.date)}${x.until ? " · until " + shortDate(x.until) : ""} · ${esc(x.message.slice(0, 90))}</div></div><button class="del" data-rm-ann="${x.id}" aria-label="Remove">✕</button></div>`).join("") || `<div class="empty">No announcements yet.</div>`}</div></section>`;
+  }
+
+  function admParents() {
+    const A = state.admin, links = A.parents || {}, reps = A.parentReports || [];
+    const kids = Object.keys(links);
+    return `<section class="card"><h2>👨‍👩‍👧 Parent flags</h2>
+      <p class="note" style="margin-top:0">Every morning at 07:30 each parent gets yesterday's habit flags for their children in their 📥 inbox (and a phone notification), only when something needs attention. Parents in the app also see "My children's habits" on Home, live. Parents not on the app yet can get the message by WhatsApp below.</p>
+      ${reps.length ? reps.map((x) => `<div class="kid"><div class="msghead"><b>${esc(x.offApp ? x.parentName + " (not on the app yet)" : nameOf(x.parent))}</b><span class="pill ${x.flags ? "warn" : "good"}">${x.flags ? "⚠️ " + x.flags : "✅ 0"} · ${shortDate(x.date)}</span></div>
+        <div class="msgbody" style="margin:6px 0;font-size:.9rem">${esc(x.text).replace(/\n/g, "<br>")}</div>
+        <a class="btn ghost full" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(`Stoic by Choice: your children's habits for ${shortDate(x.date)}\n\n${x.text}\n\n${SENDER}`)}">💬 Send by WhatsApp</a></div>`).join("") : `<div class="empty">No parent links with active children yet.</div>`}
+      <details style="margin-top:12px"><summary><b>Edit who is whose parent</b></summary>
+        <form class="form" id="parentsForm"><p class="note">Type parents' first names or record names, separated by commas (e.g. thandi, thabo). A parent who joins later is matched by first name.</p>
+        ${kids.map((c) => `<label>${esc(nameOf(c) || c)}<input data-par="${esc(c)}" value="${esc((links[c] || []).join(", "))}" maxlength="120"></label>`).join("")}
+        <button class="btn full">Save parent links</button></form></details></section>`;
+  }
+  function admFeedback() {
+    const all = state.admin.feedback || [], f = state.fbFilter || "open";
+    const shown = all.filter((x) => f === "all" || (f === "open" ? !["done", "not now"].includes(x.status) : x.status === f));
+    const areas = {}; for (const x of all) areas[x.area] = (areas[x.area] || 0) + 1;
+    return `<section class="card"><h2>💡 Feedback and ideas from participants</h2>
+      <p class="note" style="margin-top:0">${all.length} received · ${all.filter((x) => x.status === "new").length} new. A reply goes to that person's inbox.${Object.keys(areas).length ? " Most asked about: " + Object.entries(areas).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([a, n]) => `${esc(a)} (${n})`).join(", ") + "." : ""}</p>
+      <div class="seg">${[["open", "Open"], ["new", "New"], ["planned", "Planned"], ["done", "Done"], ["all", "All"]].map(([k, l]) => `<button type="button" class="${k === f ? "on" : ""}" data-fbf="${k}">${l}</button>`).join("")}</div></section>
+      ${shown.map((x) => `<section class="card fbitem"><div class="msghead"><b>${esc(x.name)}</b><span class="pill">${esc(x.area)}</span><span class="msgdate">${shortDate(x.date)}${x.time ? " · " + esc(x.time) : ""}</span></div>
+        <div class="msgbody" style="margin:8px 0">${esc(x.message).replace(/\n/g, "<br>")}</div>
+        ${x.reply ? `<div class="fbreply"><b>Your reply:</b> ${esc(x.reply).replace(/\n/g, "<br>")}</div>` : ""}
+        <div class="form"><label>Status<select data-fbstatus="${x.id}">${Object.entries(FB_STATUS).map(([k, [i, l]]) => `<option value="${k}" ${k === x.status ? "selected" : ""}>${i} ${l === "Sent" ? "New" : l}</option>`).join("")}</select></label>
+          <label>Reply (optional, goes to their inbox)<textarea data-fbreply="${x.id}" rows="2" maxlength="600" placeholder="Thank you! We will add this next week."></textarea></label>
+          <div class="grid2"><button type="button" class="btn" data-fbsave="${x.id}">Save</button><button type="button" class="btn ghost" data-fbdel="${x.id}">🗑️ Remove</button></div></div></section>`).join("") || `<section class="card"><div class="empty">Nothing here yet.</div></section>`}`;
   }
 
   function admReports() {
@@ -2307,6 +2383,10 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     on("medalForm", () => adminSend({ action: "award", memberId: $("#mdWho").value, award: $("#mdAward").value, note: $("#mdNote").value }, "🎖️ Medal issued."));
     $$("[data-rm-medal]", v).forEach((b) => b.addEventListener("click", () => confirm("Revoke this medal?") && adminSend({ action: "award", remove: b.dataset.rmMedal })));
     $$("[data-tpl]", v).forEach((b) => b.addEventListener("click", () => { $("#annMsg").value = b.dataset.tpl; }));
+    $$("[data-fbf]", v).forEach((b) => b.addEventListener("click", () => { state.fbFilter = b.dataset.fbf; render(); }));
+    $$("[data-fbsave]", v).forEach((b) => b.addEventListener("click", () => { const id = b.dataset.fbsave; const reply = $(`[data-fbreply="${id}"]`, v).value.trim(); adminSend({ action: "feedback", id, status: $(`[data-fbstatus="${id}"]`, v).value, reply }, reply ? "✅ Saved. Reply sent to their inbox." : "✅ Saved."); }));
+    $$("[data-fbdel]", v).forEach((b) => b.addEventListener("click", () => { if (confirm("Remove this feedback?")) adminSend({ action: "feedback", id: b.dataset.fbdel, remove: true }, "Removed."); }));
+    on("parentsForm", () => { const parents = {}; $$("[data-par]", v).forEach((i) => (parents[i.dataset.par] = i.value.split(",").map((x) => x.trim().toLowerCase()).filter(Boolean))); adminSend({ action: "parents", parents }, "👨‍👩‍👧 Parent links saved."); });
     on("annForm", () => adminSend({ action: "announce", to: $("#annTo").value, title: $("#annTitle").value, message: $("#annMsg").value, until: $("#annUntil").value }, "📣 Announcement sent."));
     $$("[data-rm-ann]", v).forEach((b) => b.addEventListener("click", () => adminSend({ action: "announce", remove: b.dataset.rmAnn })));
     on("prizeForm", () => adminSend({ action: "config", config: { ...A.config, prizes: { bl: Number($("#pzBl").value), effort: Number($("#pzEf").value) } } }, "🏆 Prizes saved."));
@@ -2373,6 +2453,11 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
   function bind() {
     const v = $("#view");
     $("[data-install]", v)?.addEventListener("click", installApp);
+    $$("[data-kidday]", v).forEach((b) => b.addEventListener("click", () => { state.kidDay = b.dataset.kidday; render(); }));
+    $("#fbForm", v)?.addEventListener("submit", async (e) => {
+      e.preventDefault(); const msg = $("#fbMsg").value.trim(); if (msg.length < 3) return toast("Please write your idea or feedback.");
+      if (await send({ action: "feedback", area: $("#fbArea").value, message: msg })) { render(); toast("💡 Thank you! Your feedback was sent to Dr Benadette."); setTimeout(() => $("#feedback")?.scrollIntoView({ behavior: "smooth" }), 50); }
+    });
     $$("[data-plan]", v).forEach((b) => b.addEventListener("click", async () => {
       const [n, i] = b.dataset.plan.split(":").map(Number), [label, items] = myPlan()[n][i];
       b.disabled = true;
@@ -2714,6 +2799,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
   }
 
   $("#tabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) go(b.dataset.tab); });
+  $("#inboxBtn").addEventListener("click", () => go("inbox"));
   $("#whoBtn").addEventListener("click", () => (state.account ? accountMenu() : (state.authStep = null, render())));
   $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
@@ -2730,7 +2816,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
   document.getElementById("installBtn")?.addEventListener("click", installApp);
   updateInstallBtn(); window.matchMedia("(display-mode: standalone)").addEventListener?.("change", updateInstallBtn);
   // Links from reminders (e.g. /#food) open the right page.
-  window.addEventListener("load", () => { const h = location.hash.slice(1); if (h && ["food", "water", "move", "sleep", "journal", "admin", "board", "me"].includes(h)) setTimeout(() => { go(h); history.replaceState(null, "", "/"); }, 900); });
+  window.addEventListener("load", () => { const h = location.hash.slice(1); if (h && ["food", "water", "move", "sleep", "journal", "admin", "board", "me", "inbox"].includes(h)) setTimeout(() => { go(h); history.replaceState(null, "", "/"); }, 900); });
 
   // Installable app: register the service worker and catch the install prompt (Android / desktop Chrome).
   if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));

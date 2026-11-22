@@ -648,3 +648,25 @@ details.mealgroup .list { padding-bottom: 6px; }
 .syncrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .installbtn { padding: 6px 12px; border-radius: 99px; border: 1px solid var(--gold); background: linear-gradient(135deg, #F2B134, #D99A1E); color: #1A1200; font: inherit; font-weight: 800; font-size: .82rem; cursor: pointer; white-space: nowrap; }
 .installbtn[hidden] { display: none; }
+
+/* Inbox */
+.topbtns { display: flex; align-items: center; gap: 8px; }
+.inboxbtn { position: relative; width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--line); background: #1A150C; font-size: 1.25rem; cursor: pointer; }
+.inboxbtn.on { border-color: var(--gold2); }
+.inboxbtn .badge { position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 99px; background: #D9452B; color: #fff; font-size: .72rem; font-weight: 800; line-height: 20px; text-align: center; border: 2px solid #0E0B06; }
+.inbox { display: grid; gap: 10px; }
+.msg { border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; background: #17130C; }
+.msg.new { border-color: var(--gold2); box-shadow: 0 0 0 1px var(--gold2) inset; }
+.msg h3 { margin: 8px 0 4px; font-size: 1.05rem; }
+.msghead { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.msgdate { margin-left: auto; color: var(--muted, #b9ad94); font-size: .8rem; }
+.newpill { background: #D9452B; color: #fff; }
+.msgbody { line-height: 1.5; margin-top: 4px; }
+.msgby { margin-top: 8px; font-size: .8rem; color: var(--muted, #b9ad94); }
+.fbreply { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--gold); background: #1C1810; border-radius: 8px; line-height: 1.45; }
+/* Parents */
+.kid { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; margin-top: 10px; background: #17130C; }
+.kid summary { display: flex; justify-content: space-between; align-items: center; cursor: pointer; list-style: none; }
+.kid summary::-webkit-details-marker { display: none; }
+.kidflag { margin-top: 8px; line-height: 1.4; }
+.kidgood { margin-top: 8px; color: var(--leaf); font-size: .9rem; }

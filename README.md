@@ -50,6 +50,26 @@ The one tap plan meal buttons were removed from the Food page (they repeated the
 Adding food: 1. meal, 2. time eaten, 3. tap a category, 4. choose the food from that category's list (allowed foods first, ⛔ not allowed foods at the bottom). For a food that is not listed, tap **➕ Other: type my own food**: typing shows any matching foods from the list first, or "Use … as my own food" with the calories. A food typed and logged twice is added automatically to **✏️ My own foods**. Categories: ⭐ My frequent foods, 🍽️ Plan meals, 🥩 Proteins, 🧀 Dairy, 🥬 Vegetables, 🍎 Fruit, 🍞 Carbohydrates, 🥤 Drinks, 🍬 Snacks, sweets and gum, 🧂 Condiments, spices and sweeteners, 🍔 Takeaways, 💊 Supplements and vitamins, 🩹 Medicines.
 **My frequent foods** is built automatically from each person's own entries: any food (with the same amount), plan meal or own custom food logged at least twice appears, most used first (up to 15), with how many times it was logged. Choosing one fills in the same amount.
 
+## 📥 Inbox
+
+* Every message or announcement the administrator sends (Admin → 📣 Send announcement) goes into the **📥 Inbox** of the people it was sent to: everyone, or one person only. The inbox button is at the top right, next to your name, with a red count of unread messages.
+* Messages stay in the inbox after the Home banner date ends (the last 60 are kept), newest first, marked "📣 Everyone" or "✉️ Just for you", with the date and time sent.
+* The latest message still shows on Home, with an "Open inbox" button.
+* People with reminders turned on also get a phone notification ("📣 Messages and announcements", on by default; it can be switched off under reminders). Tapping it opens the inbox.
+
+## 💡 Ideas and feedback
+
+* Participants send ideas or feedback from the inbox page or from their name menu (💡 Send ideas or feedback). They choose what it is about (food logging, points, reminders, something not working, a new feature idea…) and can see the status of what they sent.
+* The administrator gets a phone notification and sees everything under Admin → 💡 Feedback (with a count of new items), sets a status (new, seen, planned, done, not for now) and can reply. The reply goes to that person's inbox.
+* All messages are signed "Dr Benadette Aineamani, Stoic Teacher".
+
+## 👨‍👩‍👧 Parent flags
+
+* Parent links: Judith and Patrick → Benadette; Kgotso → Thandi and Thabo; Limi, Lichume and Lihlumelo → Ali (matched by first name when Ali joins). Editable under Admin → Communications → Parent flags.
+* Every morning at 07:30 each parent gets yesterday's flags for their children in their inbox (and on their phone), only when something needs attention: missed meals, eating too little, bad eating habits (fruit, Provitas, after 9 PM, plan rules), water, movement and sleep, plus what went well. Weights are never included.
+* Parents in the app see "My children's habits" on Home: today so far (eating habit flags only until the day ends) and yesterday in full.
+* For parents not on the app yet, Admin → Communications shows the same message with a "Send by WhatsApp" button.
+
 ## Plan meals for everyone, meal dropdowns and Back / Forward
 * The eating plan lines (for example "120 g chicken + 125 g veg") are at the top of everyone's food list, grouped Meal 1, Meal 2 and Meal 3 (both printed plans, repeats removed). Choosing one logs the protein and its vegetables together, with the calories, under the meal picked in step 1.
 * "What I ate today" is a set of dropdowns: Breakfast, Lunch, Dinner, and Snacks, drinks and medicines, each showing the number of items and calories; tap to open.

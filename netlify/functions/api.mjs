@@ -194,6 +194,16 @@ async function buildState(viewer, { adminView = false } = {}) {
     challenges: challenges.filter((c) => c.end >= addDays(t, -31)),
     manualAwards: manualAwards.map((x) => ({ id: x.id, memberId: x.memberId, award: x.award, note: x.note, date: x.date })),
     announcements: announcements.filter((x) => (!x.until || x.until >= t) && (x.to === "all" || x.to === viewer.memberId)).slice(-10).reverse(),
+    // Inbox: every message ever sent to this person or to everyone (kept even after the Home banner date ends).
+    myFeedback: viewer.memberId ? ((await getJ("_feedback")) || []).filter((f) => f.memberId === viewer.memberId).slice(-30).reverse().map((f) => ({ id: f.id, area: f.area, message: f.message, date: f.date, status: f.status, reply: f.reply })) : [],
+    feedbackAreas: FEEDBACK_AREAS,
+    myChildren: await (async () => {
+      const kids = (viewer.memberId && childrenByParent(config, accounts)[viewer.memberId]) || [];
+      const out = [];
+      for (const k of kids) { const r = records[k] || (await getRecord(k)); out.push({ memberId: k, today: childDay(engine, r, t, true), yesterday: childDay(engine, r, addDays(t, -1)) }); }
+      return out;
+    })(),
+    inbox: announcements.filter((x) => x.to === "all" || x.to === viewer.memberId).slice(-60).reverse().map((x) => ({ id: x.id, title: x.title, message: x.message, to: x.to === "all" ? "all" : "me", date: x.date, time: x.time || "", by: SENDER_SIGNATURE })),
   };
   // Buddy and cheers (effort only: checked in or not, never weights).
   {
@@ -210,6 +220,16 @@ async function buildState(viewer, { adminView = false } = {}) {
     out.admin = {
       accounts: accounts.map(publicAccount), records: Object.fromEntries(Object.entries(records).map(([k, r]) => [k, { ...r, reflections: r.reflections.map((x) => ({ id: x.id, date: x.date })) }])), config, adjustments, announcements: announcements.slice().reverse(),
       alerts: await safetyAlerts(engine, today),
+      feedback: ((await getJ("_feedback")) || []).slice().reverse(),
+      parents: parentLinks(config),
+      parentReports: await (async () => {
+        const map = childrenByParent(config, accounts), y = addDays(t, -1), out = [];
+        const unresolved = [...new Set(Object.values(parentLinks(config)).flat())].filter((k) => !resolveParent(k, accounts));
+        for (const [pid, kids] of Object.entries(map)) { const reps = []; for (const k of kids) reps.push(childDay(engine, records[k] || (await getRecord(k)), y)); out.push({ parent: pid, date: y, text: parentMessage(reps), flags: reps.reduce((a, c) => a + c.flags.length, 0) }); }
+        // Parents not on the app yet (e.g. Ali): a ready message to send by WhatsApp.
+        for (const k of unresolved) { const kids = Object.entries(parentLinks(config)).filter(([, ps]) => ps.includes(k)).map(([c]) => c).filter((c) => records[c]); if (!kids.length) continue; const reps = kids.map((c) => childDay(engine, records[c], y)); out.push({ parentName: k[0].toUpperCase() + k.slice(1), offApp: true, date: y, text: parentMessage(reps), flags: reps.reduce((a, c) => a + c.flags.length, 0) }); }
+        return out;
+      })(),
       audit: ((await getJ("_audit")) || []).slice(-400).reverse(), seeds: Object.keys(SEED).map((k) => ({ id: k, name: SEED[k].name, linked: accounts.some((a) => a.memberId === k) })),
     };
   }
@@ -383,6 +403,21 @@ async function handleData(req, body) {
     if (body.type === "challenges") r.challenges = r.challenges.filter((x) => !(x.date === e.date && x.challengeId === e.challengeId));
     r[body.type].push(e);
     r[body.type] = r[body.type].slice(-5000);
+  } else if (body.action === "feedback") {
+    const fb = (await getJ("_feedback")) || [];
+    const x = { id: rid(6), memberId: acct.memberId, accountId: acct.id, name: acct.name, area: FEEDBACK_AREAS.includes(body.area) ? body.area : "Other", message: str(body.message, 800), date: today, time: saTime(), status: "new", reply: "" };
+    if (x.message.length < 3) throw httpErr(400, "Please write your idea or feedback.");
+    if (fb.filter((f) => f.memberId === acct.memberId && f.date === today).length >= 5) throw httpErr(429, "Thank you! You have sent 5 today; please send more tomorrow.");
+    fb.push(x); await setJ("_feedback", fb.slice(-500));
+    // Let the administrator know on their phone.
+    try {
+      for (const ad of (await listAccounts()).filter((y) => y.role === "admin")) {
+        const rec = await getJ("push/" + ad.id); if (!rec || !rec.subs || !rec.subs.length) continue;
+        if ({ ...DEFAULT_PUSH_PREFS, ...(rec.prefs || {}) }.messages === false) continue;
+        await sendPush(ad.id, rec, { title: "💡 Feedback from " + acct.name.split(" ")[0], body: `${x.area}: ${x.message.slice(0, 120)}`, url: "/#admin" });
+      }
+    } catch (e) { console.log("feedback push failed", e.message); }
+    return json(await buildState(acct));
   } else if (body.action === "cheer") {
     const to = str(body.to, 40), cheers = (await getJ("_cheers")) || [];
     if (!to || to === acct.memberId) throw httpErr(400, "Choose someone to cheer.");
@@ -526,13 +561,44 @@ async function handleAdmin(req, body) {
       if (!x.memberId || !x.award) throw httpErr(400, "Choose a participant and an award.");
       l.push(x); await setJ("_manualAwards", l); await log("issued medal", { target: x.memberId, detail: x.award });
     }
+  } else if (a === "parents") {
+    const config = await getConfig(), links = {};
+    for (const [c, ps] of Object.entries(body.parents || {})) { const cc = str(c, 40); if (!cc) continue; links[cc] = [...new Set((Array.isArray(ps) ? ps : []).map((x) => str(x, 40).toLowerCase()).filter(Boolean))].slice(0, 4); }
+    config.parents = links; await setJ("_config", { ...((await getJ("_config")) || {}), parents: links }); await log("updated parent links");
+  } else if (a === "feedback") {
+    const fb = await list("_feedback"), x = fb.find((f) => f.id === body.id);
+    if (!x) throw httpErr(404, "Feedback not found.");
+    if (body.remove) { await setJ("_feedback", fb.filter((f) => f.id !== body.id)); await log("removed feedback"); }
+    else {
+      if (["new", "seen", "planned", "done", "not now"].includes(body.status)) x.status = body.status;
+      const reply = str(body.reply, 600);
+      if (reply) {
+        x.reply = reply; if (x.status === "new") x.status = "seen";
+        // The reply also goes to the person's inbox.
+        const l = await list("_announcements");
+        l.push({ id: rid(6), title: "Reply to your feedback", message: `You wrote (${x.area}): "${x.message.slice(0, 160)}"\n\n${reply}`, to: x.memberId, until: null, date: todaySA(), time: saTime(), by: admin.name });
+        await setJ("_announcements", l.slice(-200));
+        try { const rec = await getJ("push/" + x.accountId); if (rec && rec.subs && rec.subs.length && { ...DEFAULT_PUSH_PREFS, ...(rec.prefs || {}) }.messages !== false) await sendPush(x.accountId, rec, { title: "📣 Reply to your feedback", body: reply.slice(0, 140), url: "/#inbox" }); } catch (e) { console.log("reply push failed", e.message); }
+      }
+      await setJ("_feedback", fb); await log("updated feedback", { target: x.memberId, detail: `${x.status}${reply ? " + reply" : ""}` });
+    }
   } else if (a === "announce") {
     const l = await list("_announcements");
     if (body.remove) { await setJ("_announcements", l.filter((x) => x.id !== body.remove)); await log("removed announcement"); }
     else {
-      const x = { id: rid(6), title: str(body.title, 80), message: str(body.message, 600), to: str(body.to, 40) || "all", until: isDate(body.until) ? body.until : null, date: todaySA(), by: admin.name };
+      const x = { id: rid(6), title: str(body.title, 80), message: str(body.message, 600), to: str(body.to, 40) || "all", until: isDate(body.until) ? body.until : null, date: todaySA(), time: saTime(), by: admin.name };
       if (!x.message) throw httpErr(400, "Please write a message.");
       l.push(x); await setJ("_announcements", l.slice(-200)); await log("sent announcement", { detail: `${x.to}: ${x.title}` });
+      // Phone notification to everyone it was sent to (if they turned reminders on and kept "Messages" ticked).
+      try {
+        const { blobs } = await db().list({ prefix: "push/" });
+        for (const b of blobs) {
+          const rec = await getJ(b.key); if (!rec || !rec.subs || !rec.subs.length) continue;
+          if (x.to !== "all" && rec.memberId !== x.to) continue;
+          if ({ ...DEFAULT_PUSH_PREFS, ...(rec.prefs || {}) }.messages === false) continue;
+          await sendPush(b.key.slice(5), rec, { title: "📣 " + (x.title || "New message from Dr Benadette"), body: x.message.slice(0, 120) + " · Dr Benadette Aineamani, Stoic Teacher", url: "/#inbox" });
+        }
+      } catch (e) { console.log("announce push failed", e.message); }
     }
   } else if (a === "weights") {
     const date = body.date === "start" ? null : body.date;
@@ -566,7 +632,53 @@ async function handleAdmin(req, body) {
 
 // ---------- reminders (web push) ----------
 // The keys for signing notifications are made once and kept in the private store, so no extra setup is needed.
-const DEFAULT_PUSH_PREFS = { meals: true, water: true, night: true, weighin: true, nudge: true, vitamin: true, meditate: true, journal: true, alerts: true };
+// How the administrator's messages are signed in everyone's inbox.
+const SENDER_SIGNATURE = "Dr Benadette Aineamani, Stoic Teacher";
+// Parents who get their children's habit flags (child record → parent records). "ali" is matched by first name once Ali joins.
+const DEFAULT_PARENTS = { judith: ["benadette"], patrick: ["benadette"], kgotso: ["thandi", "thabo"], limi: ["ali"], lichume: ["ali"], lihlumelo: ["ali"] };
+const parentLinks = (config) => ({ ...DEFAULT_PARENTS, ...(config.parents || {}) });
+/** Resolves a parent key to the record id of a linked, active account (by record id, or by first name for parents who join later). */
+function resolveParent(key, accounts) {
+  const act = accounts.filter((a) => a.status === "active" && a.memberId);
+  const hit = act.find((a) => a.memberId === key) || act.find((a) => a.name.split(" ")[0].toLowerCase() === key);
+  return hit ? hit.memberId : null;
+}
+/** One child's habits for one day, as the app logged them: what needs a parent's attention, and what went well. */
+function childDay(engine, r, d, partial = false) {
+  const flags = [], good = [], e = engine.eating(r, d), st = engine.dayStatus(r, d), first = (r.profile.name || "").split(" ")[0];
+  if (!st.any && partial) return { name: first, date: d, flags: [], good, none: true, note: "Nothing logged yet today" };
+  if (!st.any) return { name: first, date: d, flags: [{ label: "Nothing logged", how: "No food, water, movement or sleep was recorded" }], good, none: true };
+  if (partial) { if (e.meals) good.push(`${e.meals} meal${e.meals === 1 ? "" : "s"} so far`); }
+  else if (e.meals < 3) flags.push({ label: e.meals ? `Only ${e.meals} of 3 meals logged` : "No meals logged", how: "Growing children need 3 meals; check they are not skipping" });
+  else good.push("3 meals");
+  if (e.tooLittle && !partial) flags.push({ label: "Ate too little", how: `${Math.round(e.kcal)} kcal logged, below ${e.minKcal} kcal: too little for a growing child` });
+  for (const f of e.flags) flags.push({ label: f.label, how: f.how });
+  const g = engine.glasses(r, d), wt = engine.waterTarget(r);
+  if (partial) { if (g) good.push(`${g} of ${wt} glasses so far`); }
+  else if (g < wt) flags.push({ label: "Not enough water", how: `${g} of ${wt} glasses` }); else good.push(`${g} glasses of water`);
+  const mins = engine.activeMinutes(r, d), steps = engine.daySteps(r, d);
+  if (partial && mins < 20 && steps < engine.stepGoal()) { if (mins || steps) good.push(`${mins} active minutes so far`); }
+  else if (mins < 20 && steps < engine.stepGoal()) flags.push({ label: "Not enough movement", how: mins || steps ? `${mins} active minutes, ${steps.toLocaleString("en-ZA")} steps (goal 20 minutes or ${engine.stepGoal().toLocaleString("en-ZA")} steps)` : "No movement logged" });
+  else good.push(mins >= 20 ? `${mins} active minutes` : `${steps.toLocaleString("en-ZA")} steps`);
+  const sl = engine.sleepOn(r, d), stg = engine.sleepTarget(r);
+  if (!sl) flags.push({ label: "Sleep not logged", how: `Aim for ${stg} hours` }); else if (sl.hours < stg) flags.push({ label: "Short sleep", how: `${sl.hours} of ${stg} hours` }); else good.push(`${sl.hours} hours of sleep`);
+  return { name: first, date: d, flags, good };
+}
+/** Which children each parent sees: { parentRecordId: [childRecordId...] }. */
+function childrenByParent(config, accounts) {
+  const out = {}, active = new Set(accounts.filter((a) => a.status === "active" && a.memberId).map((a) => a.memberId));
+  for (const [child, parents] of Object.entries(parentLinks(config))) {
+    if (!active.has(child)) continue;
+    for (const k of parents) { const p = resolveParent(k, accounts); if (p && p !== child) (out[p] = out[p] || []).push(child); }
+  }
+  return out;
+}
+const fmtDay = (d) => new Date(d + "T12:00:00Z").toLocaleDateString("en-ZA", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+function parentMessage(reports) {
+  return reports.map((c) => `${c.name}: ${c.flags.length ? c.flags.length + " flag" + (c.flags.length === 1 ? "" : "s") : "no flags ✅"}\n` + c.flags.map((f) => `⚠️ ${f.label}: ${f.how}`).join("\n") + (c.good.length ? `\n✅ Well done: ${c.good.join(", ")}` : "")).join("\n\n");
+}
+const FEEDBACK_AREAS = ["Food logging", "Exercise", "Water and sleep", "Points and awards", "Leaderboard", "Reminders", "Coach and challenges", "Profile and progress", "Something is not working", "New feature idea", "Other"];
+const DEFAULT_PUSH_PREFS = { messages: true, meals: true, water: true, night: true, weighin: true, nudge: true, vitamin: true, meditate: true, journal: true, alerts: true };
 const cleanPrefs = (p) => Object.fromEntries(Object.keys(DEFAULT_PUSH_PREFS).map((k) => [k, p[k] !== false]));
 async function vapid() {
   let v = await getJ("_vapid");
@@ -603,6 +715,21 @@ export async function runScheduled(nowHM = env("TEST_TIME") || saTime()) {
     out.backup = today;
   }
   if (today < settings.start) return out;
+  // 07:30: yesterday's habit flags for each child go to their parent's inbox (and phone), only when something needs attention.
+  if (due("07:30") && (await getJ("_parentSent")) !== today) {
+    await setJ("_parentSent", today);
+    const accounts = await listAccounts(), y = addDays(today, -1), anns = (await getJ("_announcements")) || [];
+    out.parents = [];
+    for (const [pid, kids] of Object.entries(childrenByParent(config, accounts))) {
+      const reps = []; for (const k of kids) reps.push(childDay(engine, await getRecord(k), y));
+      const n = reps.reduce((a, c) => a + c.flags.length, 0); if (!n) continue;
+      const x = { id: rid(6), title: `👨‍👩‍👧 For your attention: ${reps.filter((c) => c.flags.length).map((c) => c.name).join(", ")} (${fmtDay(y)})`, message: parentMessage(reps) + "\n\nFrom the app logs. A kind word helps more than a telling off.", to: pid, until: null, date: today, time: nowHM, by: SENDER_SIGNATURE, kind: "parent" };
+      anns.push(x); out.parents.push([pid, n]);
+      const acct = accounts.find((a) => a.memberId === pid), rec = acct && (await getJ("push/" + acct.id));
+      if (rec && rec.subs && rec.subs.length && { ...DEFAULT_PUSH_PREFS, ...(rec.prefs || {}) }.messages !== false) await sendPush(acct.id, rec, { title: x.title, body: `${n} habit flag${n === 1 ? "" : "s"} from yesterday. Tap to see.`, url: "/#inbox" });
+    }
+    await setJ("_announcements", anns.slice(-200));
+  }
   const { blobs } = await db().list({ prefix: "push/" });
   const wd = engine.isWeighDay(addDays(today, 1));
   for (const b of blobs) {
