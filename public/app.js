@@ -2,7 +2,7 @@
    Talks to the secure API in netlify/functions/api.mjs. Points, rankings and awards are calculated on the
    server with the same rules file (core.js) that this app uses for display. */
 import { FOODS, FOOD_BY_ID, CATEGORIES, SERVINGS, GRAM_CHIPS, foodKcal, searchFoods } from "./foods.js";
-import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER_WEEK, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, BADGES, HOLIDAYS, MOODS, SLEEP_QUALITY, JOURNAL_CHECKS, KCAL_PER_KG, todaySA, addDays, diffDays, pad, dow, holiday, emptyRecord, normRecord } from "./core.js";
+import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER_WEEK, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, taskFor, BADGES, HOLIDAYS, MOODS, SLEEP_QUALITY, JOURNAL_CHECKS, KCAL_PER_KG, todaySA, addDays, diffDays, pad, dow, holiday, emptyRecord, normRecord } from "./core.js";
 
 (() => {
   "use strict";
@@ -1948,8 +1948,9 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
       ${rows.map(([wd, cy]) => {
         const d = dates[wd], done = d && taskDone(r, d), isToday = d === today, can = isToday && d >= settings().start;
         return `${isToday ? ov(172, cy - 26, 786, 52, "", "todayrow") : ""}
+          ${ov(262, cy - 22, 623, 44, `<span class="tasktxt">${esc(d ? taskFor(d, settings().start) : DAILY_TASKS[wd])}</span>`, "taskcover")}
           ${ov(895, cy - 24, 50, 48, d ? (done ? "✓" : "") : "–", `cover chk ${done ? "on" : ""}`)}
-          ${hs(172, cy - 26, 786, 52, can ? "task" : "tasknot", `${DAILY_TASKS[wd]} ${d ? shortDate(d) : ""}`, `data-date="${d || ""}"`)}`;
+          ${hs(172, cy - 26, 786, 52, can ? "task" : "tasknot", `${d ? taskFor(d, settings().start) : DAILY_TASKS[wd]} ${d ? shortDate(d) : ""}`, `data-date="${d || ""}"`)}`;
       }).join("")}
       ${hs(140, 1265, 745, 100, "taskToday", "Complete today's task")}
       ${hs(80, 1130, 864, 120, "quote", "Another Stoic thought")}
@@ -2141,7 +2142,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     if (!state.me) return;
     const r = rec(state.me), existing = (r.tasks || []).find((t) => t.date === d);
     if (existing) { if (await send({ member: state.me, action: "delete", type: "tasks", id: existing.id })) { render(); toast("Task unticked."); } return; }
-    await addEntry("tasks", { id: uid(), date: d }, `✅ ${esc(DAILY_TASKS[dow(d)])}: done.`, true);
+    await addEntry("tasks", { id: uid(), date: d }, `✅ ${esc(taskFor(d, settings().start))}: done.`, true);
   }
 
   // =====================================================================

@@ -57,6 +57,12 @@ Adding food: 1. meal, 2. time eaten, 3. tap a category, 4. choose the food from 
 * The latest message still shows on Home, with an "Open inbox" button.
 * People with reminders turned on also get a phone notification ("📣 Messages and announcements", on by default; it can be switched off under reminders). Tapping it opens the inbox.
 
+## 🎯 A new weekly challenge every week
+
+* The 7 daily challenges change every challenge week (23 different sets, in public/core.js → WEEKLY_TASKS). Week 1 kept the original set; week 2 starts on Tuesday 24 November.
+* Each day keeps its theme so scoring is unchanged: Monday movement, Tuesday food, Wednesday water, Thursday sleep, Friday mind, Saturday active with someone, Sunday reflection. Monday, Wednesday, Thursday and Sunday still tick themselves when that habit is logged; Tuesday, Friday and Saturday are ticked by hand for 2 points.
+* Past days keep the challenge of their own week.
+
 ## 💡 Ideas and feedback
 
 * Participants send ideas or feedback from the inbox page or from their name menu (💡 Send ideas or feedback). They choose what it is about (food logging, points, reminders, something not working, a new feature idea…) and can see the status of what they sent.
