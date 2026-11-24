@@ -57,6 +57,28 @@ Adding food: 1. meal, 2. time eaten, 3. tap a category, 4. choose the food from 
 * The latest message still shows on Home, with an "Open inbox" button.
 * People with reminders turned on also get a phone notification ("📣 Messages and announcements", on by default; it can be switched off under reminders). Tapping it opens the inbox.
 
+## 🏅 Badges that count, and monthly awards
+
+* **Weekly Challenge badge** (most points): unlocked every Tuesday for last week's winner.
+* **Biggest Loser badge**: unlocked every Tuesday for the person who lost the most weight (% of body weight) the week before, plus a treat to themselves. The final Biggest Loser Award is still revealed at the Grand Finale.
+* Every badge shows how many times it was won and the last date (e.g. "× 3 · last 08 Dec"); tapping it lists every date. The trophy cabinet and the Awards cards list each week with its date.
+* **Monthly Challenge** (4 week months): opens on the last day of the month. At 21:00 that day the winner (most points) and the month's most weight lost are announced to everyone (inbox, phone notification and a confetti celebration) and saved, so the result never changes. Under 18s are ranked too, with their loss counted up to 1% a week (4% a month) for safety.
+
+## 🎉 New week celebration and the Review tab
+
+* The first time anyone opens the app in a new challenge week, a celebration pops up with confetti: congratulations to last week's most points winner (whose weekly award opens that Tuesday) and most weight lost (a treat to themselves, not an award), and "Week N starts now. Everyone starts on 0. Anyone can win this week. Let's go!". It shows once per week on each phone.
+* Two weekly winners are celebrated: 🏆 **most points** in the week, and ⚖️ **most weight lost** in the week, shown only as a percentage of body weight (last weight logged in the week, an official weigh in first, against the last weight before the week). Everyone is ranked, under 18s included (marked 🌱); for their safety a junior's loss counts for ranking up to 1% of body weight a week, so losing faster never wins.
+* Every Tuesday from 07:00 (the first day of each challenge week) everyone also gets the message in their 📥 inbox and as a phone notification: both winners, congratulations, and "Everyone starts on 0 points. Anyone can win this week. Let's go!". It is sent once per week; tapping the notification opens the Review tab.
+* The new 🎉 Review tab (next to Challenge) shows the week in review, "📅 My weeks" (every past week's points, day by day) and the top scorer of every week.
+
+## 🎁 Milestones (not prizes)
+
+* Every 2.5% of starting weight lost shows a milestone with a "treat yourself" idea (e.g. new workout gear, a movie night). These are suggestions for a non food treat people give themselves or plan with family. They are **not prizes** from the challenge; official prizes are only the awards on weigh in day. The wording in the app says so.
+
+## 📅 My weeks: review past points
+
+* On the Challenge tab, "📅 My weeks" has a button for every week so far. Each week shows its total, then every day with its points; tap a day to see each item (check in, meals, move, water, sleep, journal, daily challenge), what earned points and what was missed. Missed days show −10. Past weeks also show the "done and left undone" summary. Weigh in points stay on the Board.
+
 ## 🎯 A new weekly challenge every week
 
 * The 7 daily challenges change every challenge week (23 different sets, in public/core.js → WEEKLY_TASKS). Week 1 kept the original set; week 2 starts on Tuesday 24 November.
@@ -88,7 +110,7 @@ Adding food: 1. meal, 2. time eaten, 3. tap a category, 4. choose the food from 
 4. **Eating plan rules:** folded at the bottom.
 
 ## Awards timing
-Weekly and Monthly Challenge Awards are presented on an official weigh in day: at the first weigh in Saturday after the week (Tuesday to Monday) or calendar month has closed, and only once the administrator has entered the weights for that weigh in (the server checks this). Until then nobody is named, not even in the data sent to phones; the award shows "presented at the weigh in on …". Weigh ins are every other Saturday, so two weekly awards are usually presented at each weigh in (for example weeks 1 and 2 on Saturday 5 December). The Board still shows the live standings.
+**Weekly awards open every Tuesday**, the day after the challenge week (Tuesday to Monday) closes, for 🏆 most points (Weekly Challenge Award). The week's ⚖️ most weight lost (% of body weight; under 18s ranked too, their loss counted up to 1% a week) is celebrated in the Tuesday message with a treat to themselves: it is not an award. **Monthly** Challenge Awards are presented on an official weigh in day: at the first weigh in Saturday after the month has closed, and only once the administrator has entered the weights for that weigh in (the server checks this). Until then nobody is named, not even in the data sent to phones; the award shows "presented at the weigh in on …". The Board still shows the live standings.
 
 ## Key dates page
 The challenge has 159 days, 23 challenge weeks and 6 challenge months; the header shows "Day x of 159 · Week x of 23 · Month x of 6", and the Key dates page opens with "The challenge in numbers" (days, weeks and months with completed and to go).

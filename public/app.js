@@ -8,7 +8,8 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
   "use strict";
 
   let MEMBERS = []; // filled from the server: { id, name, color, avatar, group }
-  // Non food rewards unlocked for every 2.5% of starting weight lost.
+  // Milestones: every 2.5% of starting weight lost. These are SUGGESTED non food treats a person gives themselves
+  // (or plans with family). They are not prizes from the challenge; official prizes are only the awards on weigh in day.
   const REWARDS = [
     "👟 New workout gear or trainers", "🎬 Family movie night, you choose the film", "💆🏾 Pamper or spa session",
     "🎧 A new playlist or audiobook", "🌳 Day trip or picnic at a nature reserve", "👗 Something new to wear in your new size",
@@ -105,7 +106,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     session: store.get("sbc_session", null), account: null, pending: false,
     me: null, tab: "today", date: todaySA(), online: false, lastSync: null, busy: false, tipShift: 0, quoteShift: 0,
     calc: { kg: null, deficit: 500 }, settings: null, config: null, participants: [], summaries: {}, results: null,
-    myRecord: null, challenges: [], manualAwards: [], announcements: [], inbox: [], myFeedback: [], feedbackAreas: [], myChildren: [], aggregates: null, admin: null, adminTab: "dashboard",
+    myRecord: null, challenges: [], manualAwards: [], announcements: [], inbox: [], myFeedback: [], feedbackAreas: [], myChildren: [], weekReview: [], aggregates: null, admin: null, adminTab: "dashboard",
     authStep: null, boardMode: "week",
   };
 
@@ -158,7 +159,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     state.challenges = data.challenges || [];
     state.manualAwards = data.manualAwards || [];
     state.announcements = data.announcements || [];
-    state.inbox = data.inbox || []; state.myFeedback = data.myFeedback || []; state.feedbackAreas = data.feedbackAreas || []; state.myChildren = data.myChildren || [];
+    state.inbox = data.inbox || []; state.myFeedback = data.myFeedback || []; state.feedbackAreas = data.feedbackAreas || []; state.myChildren = data.myChildren || []; state.weekReview = data.weekReview || [];
     state.aggregates = data.aggregates || null;
     state.buddy = data.buddy || null; state.cheers = data.cheers || { received: [], sent: [] }; state.push = data.push || null; state.syncCodeSet = !!data.syncCodeSet;
     state.finale = data.finale || state.finale || { revealed: false, revealAt: null };
@@ -174,7 +175,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     if (!state.session) { setSync("🔒 Secure sign in"); if (initial) render(); return; }
     try {
       const data = await api("state");
-      const key = () => JSON.stringify([state.summaries, state.myRecord, state.settings, state.announcements, state.inbox, state.myFeedback, state.myChildren, state.pending, state.challenges, state.manualAwards]);
+      const key = () => JSON.stringify([state.summaries, state.myRecord, state.settings, state.announcements, state.inbox, state.myFeedback, state.myChildren, state.weekReview, state.pending, state.challenges, state.manualAwards]);
       const before = key();
       applyState(data); setSync();
       if (initial || key() !== before) safeRender();
@@ -212,7 +213,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
   const ZERO = {
     total: 0, habit: 0, checkins: 0, missed: 0, streak: 0, sw: null, cw: null, lostKg: null, pct: null, goal: null, weightPts: null,
     minor: null, habits: null, tooFast: null, treats: { earned: 0, used: 0, left: 0, current: null, usedToday: false }, rewards: 0,
-    weekPts: {}, monthPts: {}, days14: [], bestStreak: 0, maxWeekMins: 0, foodDays: 0, comeback: false, weighIns: 0, weeklyWins: 0,
+    weekPts: {}, monthPts: {}, days14: [], bestStreak: 0, maxWeekMins: 0, foodDays: 0, comeback: false, weighIns: 0, weeklyWins: 0, weeklyLossWins: 0, weeklyWinDates: [], weeklyLossDates: [], monthlyWinDates: [],
     monthlyWins: 0, exerciseMinutes: 0, exerciseDays: 0, isBL: false, isConsistent: false, isResilience: false, over: false, weekAllIn: [], tasksThisWeek: 0,
   };
   /** Official score, calculated by the server. Weight fields are blank for other people (privacy). */
@@ -271,7 +272,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
       ${row("📉", "Weight lost at official weigh ins, up to a safe pace", `+${POINTS.perPercent} per 1%`)}
       <h3>🏆 How winners are decided</h3>
       <ul class="pglist">
-        <li><b>Weekly award:</b> most daily points in a challenge week (Tuesday to Monday). <b>Monthly award:</b> most daily points in a challenge month of 4 weeks (Month 1 is 17 Nov to 14 Dec). Both are presented at the next weigh in, after the weights are entered.</li>
+        <li><b>Weekly award:</b> most daily points in a challenge week (Tuesday to Monday). <b>Monthly award:</b> most daily points in a challenge month of 4 weeks (Month 1 is 17 Nov to 14 Dec). The weekly award (most points) opens every Tuesday, and the week's most weight lost unlocks the Biggest Loser badge plus a treat to themselves. Monthly awards open on the last day of the month (announced at 21:00).</li>
         <li><b>Biggest Loser (R${fmt(prizes().bl)}):</b> highest percentage of starting weight lost, from official weigh ins only. Revealed at the Grand Finale.</li>
         <li><b>Greatest Effort (R${fmt(prizes().effort)}):</b> most daily habit points over the whole challenge. Weight does not count. Revealed at the Grand Finale.</li>
       </ul>
@@ -279,8 +280,81 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     </div>`;
   }
   const POINTS_GUIDE_KEY = "sbc_points_guide_v2";
+  // Once per new challenge week, on every phone: congratulate last week's top scorer and open the new week with confetti.
+  const NEWWEEK_KEY = "sbc_newweek_seen";
+  function lastWeekReview() { const l = state.weekReview || []; return l.length ? l[l.length - 1] : null; }
+  const nameList = (ids) => { const n = ids.map((id) => `<b>${esc(nameOf(id))}</b>`); return n.length > 1 ? n.slice(0, -1).join(", ") + " and " + n[n.length - 1] : n[0]; };
+  function winnerLine(w) {
+    if (!w) return "";
+    return `<div class="nwtwo"><div class="nwprize"><div class="nwicon">🏆</div><small>Most points</small>${w.winners.length ? `<div>${nameList(w.winners)}</div><b class="nwval">${fmt(w.top)} points</b>` : `<div>Nobody scored points</div>`}</div>
+      <div class="nwprize"><div class="nwicon">⚖️</div><small>Most weight lost</small>${(w.weightWinners || []).length ? `<div>${nameList(w.weightWinners)}</div><b class="nwval">${String(w.topPct).replace(".", ",")}% of body weight</b><small class="nwtreat">🏅 Biggest Loser badge · 🎁 Treat yourself!</small>` : `<div>No weight loss logged</div>`}</div></div>
+      <p>Congratulations to Week ${w.n}'s winners! 👏🏾</p>`;
+  }
+  function trophyLine(w) { return w ? `<p class="note">${w.winners.length ? `🏅 The Weekly Challenge badge for most points is unlocked on the Awards page. ` : ""}${(w.weightWinners || []).length ? "⚖️ The most weight lost unlocks the Biggest Loser badge, and a treat you give yourself." : ""}</p>` : ""; }
+  // Once per challenge month, on every phone: the monthly winner (announced at 21:00 on the month's last day).
+  function lastMonthAward() {
+    const snaps = (state.config || {}).monthAwards || {}, ms = challengeMonths().filter((m) => snaps[m.key]);
+    if (!ms.length) return null; const m = ms[ms.length - 1]; return { ...m, ...snaps[m.key] };
+  }
+  function monthHtml(m) {
+    return `<div class="nwtwo"><div class="nwprize"><div class="nwicon">🏆</div><small>Monthly Challenge</small>${m.winners.length ? `<div>${nameList(m.winners)}</div><b class="nwval">${fmt(m.top)} points</b><small class="nwtreat">🏅 Monthly Challenge badge</small>` : "<div>Nobody scored points</div>"}</div>
+      <div class="nwprize"><div class="nwicon">⚖️</div><small>Most weight lost</small>${(m.weightWinners || []).length ? `<div>${nameList(m.weightWinners)}</div><b class="nwval">${String(m.topPct).replace(".", ",")}% of body weight</b><small class="nwtreat">🎁 Treat yourself!</small>` : "<div>No weight loss logged</div>"}</div></div>`;
+  }
+  function maybeShowMonth() {
+    if (!state.me || !state.account || state.pending) return false;
+    const m = lastMonthAward(); if (!m || diffDays(m.date, todayStr()) > 7) return false;
+    let seen = null; try { seen = localStorage.getItem("sbc_month_seen"); } catch {}
+    if (seen === m.key || !$("#modal").classList.contains("hidden")) return false;
+    const md = modal(`<div class="newweek"><div class="nwbig">🏆</div><h2>${esc(m.label.split(" · ")[0])} is complete!</h2>${monthHtml(m)}
+      <p>Congratulations! 👏🏾</p><div class="nwgo">A new month starts${m.date === todayStr() ? " tomorrow" : ""}. Everyone starts on 0. <b>Anyone can win. Let's go!</b> 💪🏾</div>
+      <button class="btn full" data-mgo>🔥 Let's go</button><p class="note" style="text-align:center">From Dr Benadette Aineamani, Stoic Teacher</p></div>`);
+    $("[data-mgo]", md).addEventListener("click", () => { try { localStorage.setItem("sbc_month_seen", m.key); } catch {} closeModal(); confetti(); });
+    confetti(); setTimeout(confetti, 900); setTimeout(confetti, 1900);
+    return true;
+  }
+  function maybeShowNewWeek() {
+    if (!state.me || !state.account || state.pending) return false;
+    const w = lastWeekReview(), cw = currentWeek(); if (!w || w.n !== cw.n - 1) return false;
+    let seen = null; try { seen = localStorage.getItem(NEWWEEK_KEY); } catch {}
+    if (seen === String(cw.n) || !$("#modal").classList.contains("hidden")) return false;
+    const m = modal(`<div class="newweek"><div class="nwbig">🎉</div><h2>A new week has begun!</h2>
+      <div class="nwwin">${winnerLine(w)}</div>${trophyLine(w)}
+      <div class="nwgo"><b>Week ${cw.n} of ${challengeWeeks().length}</b> starts now (${fmtDate(cw.w0, { day: "numeric", month: "short" })} to ${fmtDate(cw.w1, { day: "numeric", month: "short" })}). Everyone starts on 0. <b>Anyone can win this week. Let's go!</b> 💪🏾</div>
+      <button class="btn full" data-nwgo>🔥 Let's go</button><button class="btn ghost full" data-nwreview style="margin-top:8px">🎉 See the week in review</button>
+      <p class="note" style="text-align:center">From Dr Benadette Aineamani, Stoic Teacher</p></div>`);
+    const done = () => { try { localStorage.setItem(NEWWEEK_KEY, String(cw.n)); } catch {} closeModal(); };
+    $("[data-nwgo]", m).addEventListener("click", () => { done(); confetti(); });
+    $("[data-nwreview]", m).addEventListener("click", () => { done(); go("review"); });
+    confetti(); setTimeout(confetti, 900); setTimeout(confetti, 1900);
+    return true;
+  }
+  function weightPodiumHtml(w) {
+    if (!w || !(w.weightPodium || []).length) return "";
+    const medal = ["🥇", "🥈", "🥉"];
+    return `<h3>⚖️ Most weight lost</h3><div class="nwpod">${w.weightPodium.map((x, i) => `<div class="nwrow ${x.id === state.me ? "me" : ""}"><span class="nwm">${medal[i]}</span><span class="grow">${esc(nameOf(x.id))}${x.id === state.me ? " (you)" : ""}${x.junior ? " 🌱" : ""}</span><b>${String(x.pct).replace(".", ",")}%</b></div>`).join("")}</div>
+      <p class="note">Weight lost is shown as a percentage of body weight, from weights logged in the app. Everyone is ranked, under 18s (🌱) too; for their safety, a junior's loss counts up to 1% a week, so losing faster never wins.</p>`;
+  }
+  function podiumHtml(w) {
+    if (!w || !w.podium.length) return "";
+    const medal = ["🥇", "🥈", "🥉", "4", "5"];
+    let place = 0, prev = null;
+    return `<div class="nwpod">${w.podium.map((x, i) => { if (x.pts !== prev) place = i; prev = x.pts; const mem = MEMBERS.find((m) => m.id === x.id) || {};
+      return `<div class="nwrow ${x.id === state.me ? "me" : ""}"><span class="nwm">${medal[place]}</span><span class="grow">${esc(nameOf(x.id))}${x.id === state.me ? " (you)" : ""}</span><b>${fmt(x.pts)} pts</b></div>`; }).join("")}</div>`;
+  }
+  // The Review tab: last week's winner, the new week, and every past week's points.
+  function viewReview() {
+    const w = lastWeekReview(), cw = currentWeek(), past = (state.weekReview || []).slice().reverse();
+    return `<section class="card newweek hero"><div class="nwbig">🎉</div><h2>Week in review</h2>
+      ${w ? `<div class="nwwin">${winnerLine(w)}</div><h3>🏆 Most points</h3>${podiumHtml(w)}${weightPodiumHtml(w)}${trophyLine(w)}` : `<p>The first week is still running. Come back when it ends.</p>`}
+      <div class="nwgo"><b>It's Week ${cw.n}: a new week!</b> Everyone starts on 0 points this week. Anyone can win. Let's go! 💪🏾</div>
+      <button class="btn full" data-celebrate>🎊 Celebrate</button></section>
+      ${lastMonthAward() ? `<section class="card newweek"><h2>🏆 ${esc(lastMonthAward().label.split(" · ")[0])} winners</h2>${monthHtml(lastMonthAward())}</section>` : ""}
+      ${myWeeksCard()}
+      ${past.length > 1 ? `<section class="card"><h2>🏆 Winners of every week</h2>${past.map((x) => `<div class="wsrow ok"><span>🏆</span><div class="grow"><b>Week ${x.n}</b><small>${fmtDate(x.w0, { day: "numeric", month: "short" })} to ${fmtDate(x.w1, { day: "numeric", month: "short" })}</small></div><span style="text-align:right">🏆 ${x.winners.length ? x.winners.map((id) => esc(nameOf(id).split(" ")[0])).join(" & ") + " · " + fmt(x.top) : "None"}<br>⚖️ ${(x.weightWinners || []).length ? x.weightWinners.map((id) => esc(nameOf(id).split(" ")[0])).join(" & ") + " · " + String(x.topPct).replace(".", ",") + "%" : "None"}</span></div>`).join("")}</section>` : ""}`;
+  }
   function maybeShowPointsGuide() {
     if (!state.me || !state.account) return;
+    if (maybeShowMonth() || maybeShowNewWeek()) return;
     let seen = false; try { seen = localStorage.getItem(POINTS_GUIDE_KEY) === "1"; } catch {}
     if (seen || !$("#modal").classList.contains("hidden")) return;
     const m = modal(`<h2>📣 How points work</h2><p class="note" style="margin-top:0">The points were made simpler and fairer on 19 November. Please read this once.</p>${pointsGuide()}<button class="btn full" data-guideok>Got it</button>`);
@@ -483,7 +557,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     $$("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === state.tab));
     if (!signedIn) { $("#view").innerHTML = viewAuth(); bindAuth(); return; }
     if (state.pending || !state.me) { $("#view").innerHTML = viewPending(); bindAuth(); return; }
-    const views = { today: viewToday, challenge: viewChallenge, log: () => ({ move: viewMove, water: viewWater, sleep: viewSleep, journal: viewJournal }[state.logMode] || viewFood)(), food: viewFood, move: viewMove, board: viewBoard, awards: viewAwards, calendar: viewCalendar, profile: viewProfile, recipes: viewRecipes, inbox: viewInbox, calc: viewCalc, me: viewMe, admin: viewAdmin };
+    const views = { today: viewToday, challenge: viewChallenge, log: () => ({ move: viewMove, water: viewWater, sleep: viewSleep, journal: viewJournal }[state.logMode] || viewFood)(), food: viewFood, move: viewMove, board: viewBoard, awards: viewAwards, calendar: viewCalendar, profile: viewProfile, recipes: viewRecipes, inbox: viewInbox, review: viewReview, calc: viewCalc, me: viewMe, admin: viewAdmin };
     if (state.tab === "admin" && a.role !== "admin") state.tab = "today";
     const canBack = state.tab !== "today" || navStack.length > 0, canFwd = fwdStack.length > 0;
     $("#view").innerHTML = (canBack || canFwd ? `<div class="navrow"><button class="backbtn" data-back ${canBack ? "" : "disabled"}>‹ Back</button><button class="backbtn fwd" data-fwd ${canFwd ? "" : "disabled"}>Forward ›</button></div>` : "") + (views[state.tab] || viewToday)();
@@ -705,6 +779,22 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     return `<section class="card"><div class="row between"><h2>${title}</h2><span class="pill ${left ? "warn" : "good"}">${left ? left + " to finish" : "All done ✓"}</span></div>
       <p class="note" style="margin-top:0">Week ${w.n} · ${fmtDate(w.w0, { day: "numeric", month: "short" })} to ${fmtDate(w.w1, { day: "numeric", month: "short" })}</p>
       <div class="wslist">${sl.join("")}</div></section>`;
+  }
+  // Review any past week: points day by day, what earned them, and what was left undone.
+  function myWeeksCard() {
+    const t = todayStr(), all = challengeWeeks().filter((w) => w.w0 <= t); if (!all.length || !state.me) return "";
+    const r = rec(state.me), sel = all.find((w) => w.n === state.reviewWeek) || all[all.length - 1];
+    const days = []; for (let d = sel.w0; d <= sel.w1 && d <= t; d = addDays(d, 1)) days.push(d);
+    const total = days.reduce((a, d) => a + dayPoints(r, d), 0);
+    const dayRow = (d) => { const sc = scorecard(r, d), pts = dayPoints(r, d), st = dayStatus(r, d);
+      return `<details class="wkday"><summary><span class="grow"><b>${fmtDate(d, { weekday: "short", day: "numeric", month: "short" })}</b>${d === t ? " · today" : ""}</span><span class="pill ${pts < 0 ? "warn" : pts > 0 ? "good" : ""}">${pts > 0 ? "+" : ""}${pts} pts</span></summary>
+        ${!st.any ? `<div class="wsrow"><span>✗</span><div class="grow"><b>${d >= t ? "Nothing logged yet" : pts < 0 ? "Missed day" : "Not counted"}</b><small>${d < t && pts < 0 ? pts + " points" : d < t ? "Before you joined, or a public holiday" : ""}</small></div></div>` : sc.items.map((it) => `<div class="wsrow ${it.done ? "ok" : ""}"><span>${it.done ? "✓" : it.icon}</span><div class="grow"><b>${esc(it.label)}</b><small>${esc(it.how || "")}</small></div><b>${it.done ? (it.pts > 0 ? "+" : "") + it.pts : it.pts < 0 ? it.pts : "0"}</b></div>`).join("")}</details>`; };
+    return `<section class="card" id="myweeks"><h2>📅 My weeks: review my points</h2>
+      <p class="note" style="margin-top:0">Pick a week to see every day's points, what earned them and what was missed. Weigh in points are on the Board.</p>
+      <div class="seg wrap">${all.map((w) => `<button type="button" class="${w.n === sel.n ? "on" : ""}" data-rweek="${w.n}">Week ${w.n}</button>`).join("")}</div>
+      <div class="row between" style="margin:10px 0"><span>${fmtDate(sel.w0, { day: "numeric", month: "short" })} to ${fmtDate(sel.w1, { day: "numeric", month: "short" })}${sel.w1 >= t ? " · in progress" : ""}</span><span class="pill good">${total > 0 ? "+" : ""}${total} pts</span></div>
+      ${days.slice().reverse().map(dayRow).join("")}</section>
+      ${sel.n !== currentWeek().n ? weekSummaryCard(sel, `📒 Week ${sel.n}: done and left undone`) : ""}`;
   }
   function weekEndCard() {
     const t = todayStr(), w = currentWeek(); if (t < settings().start) return "";
@@ -1635,7 +1725,8 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
           <div class="stat"><b>${fmt(sc.total)}</b><span>points</span></div>
           <div class="stat"><b>${sc.streak}</b><span>day streak</span></div>
         </div>
-        <details class="fold" style="margin-top:12px"><summary>🎁 Rewards unlocked: ${sc.rewards}</summary>
+        <details class="fold" style="margin-top:12px"><summary>🎁 Milestones reached: ${sc.rewards} (treat yourself ideas)</summary>
+          <p class="note">Ideas for a non food treat you give yourself or plan with your family. These are <b>not prizes</b> from the challenge; official prizes are the awards on weigh in day.</p>
           ${sc.rewards ? `<div class="list">${REWARDS.slice(0, sc.rewards).map((x) => `<div class="item">${x}</div>`).join("")}</div>` : ""}
           <small>${sc.sw ? `Next reward at ${fmt(sc.sw * (1 - (sc.rewards + 1) * 0.025), 1)} kg (every 2.5% of your starting weight). Plan a non food treat with your family.` : "Weigh in to start unlocking rewards."}</small></details>
         ${sc.goal !== null ? `<div style="margin-top:12px"><small>${fmt(sc.goal)}% of the way to ${fmt(p.goalWeight, 1)} kg</small><div class="bar"><i style="width:${sc.goal}%"></i></div></div>` : ""}
@@ -1856,6 +1947,9 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
   /** Achievements for the signed in person come from their official summary. */
   const achievements = (id) => score(id);
 
+  // How many times a badge was won, and when: "× 2 · 24 Nov, 1 Dec".
+  const winDates = (key, a) => { const f = BADGES[key] && BADGES[key].dates; return f ? (a[f] || []) : []; };
+  const winCount = (key, a) => { const d = winDates(key, a); return d.length ? `${d.length > 1 ? "× " + d.length + " · last " : ""}${fmtDate(d[d.length - 1], { day: "numeric", month: "short" })}` : ""; };
   function badgeOverlay(key, a, x, y, w, h) {
     const b = BADGES[key], won = b.test(a), leading = !won && b.lead && b.lead(a);
     return `${won ? ov(x + w - 44, y + 4, 40, 40, "✓", "tick") : leading ? ov(x + w / 2 - 58, y + h - 30, 116, 30, "Leading", "leadpill") : ov(x, y, w, h, "🔒", "locked")}
@@ -1985,7 +2079,8 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     return `<div class="screen">
       <img src="${IMG.awards}" alt="Stoic by Choice awards and achievements" width="1024" height="1536">
       ${cells.map(([k, x, y]) => { const b = BADGES[k], won = b.test(a), lead = false; // awards are only shown once earned, never "leading" during the period
-        return `${won ? ov(x + 242, y + 8, 40, 40, "✓", "tick") : lead ? ov(x + 87, y + 150, 116, 30, "Leading", "leadpill") : ov(x, y, 290, k === "grand" || k === "transformation" || k === "comeback" ? 210 : 185, "🔒", "locked soft")}
+        const cnt = won ? winCount(k, a) : "";
+        return `${won ? ov(x + 242, y + 8, 40, 40, "✓", "tick") + (cnt ? ov(x + 10, y + 150, 270, 32, `<span class="wincnt">${esc(cnt)}</span>`, "wincov") : "") : lead ? ov(x + 87, y + 150, 116, 30, "Leading", "leadpill") : ov(x, y, 290, k === "grand" || k === "transformation" || k === "comeback" ? 210 : 185, "🔒", "locked soft")}
           ${hs(x, y, 290, k === "grand" || k === "transformation" || k === "comeback" ? 210 : 185, target[k] ? "scroll:" + target[k] : "badge", b.label, `data-badge="${k}"`)}`; }).join("")}
       ${ms.map(([label, done, cur], i) => { const x = [175, 312, 449, 586, 727, 868][i];
         return ov(x - 24, 1141, 48, 48, done ? "✓" : cur ? "★" : "🔒", `ms ${done ? "done" : cur ? "cur" : "lock"}`) + hs(x - 60, 1135, 120, 105, "milestone", label, `data-label="${esc(label)}" data-state="${done ? "done" : cur ? "cur" : "lock"}"`); }).join("")}
@@ -2039,6 +2134,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     return `<button class="btn ghost full keydates" data-go="calendar">📅 Key dates: week and month ending dates</button>
       ${weeklyScreen()}
       ${weekSummaryCard(currentWeek(), "📒 This week so far")}
+
       <section class="card">${prizeStrip()}<p class="note center" style="margin:8px 0 0">Revealed together at the Grand Finale · ${esc(finaleLabel())}</p></section>
       ${upcomingCard()}
       ${treatCard(score(state.me).treats)}`;
@@ -2058,18 +2154,18 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     const names = (ids) => (ids && ids.length ? ids.map((x) => esc(nameOf(x).split(" ")[0])).join(" & ") : "nobody yet");
     return `<button class="btn ghost full keydates" data-go="calendar">📅 Key dates: when each week and month ends and is revealed</button>
       ${awardsScreen()}
-      <details class="card award" id="aw-weekly">${head(IMG.weekly_award, "Weekly Challenge Award", (() => { const last = wr.filter((w) => w.done).pop(); const pend = wr.find((w) => !w.done && w.presentOn && w.w0 <= today); const next = pend ? `Week ${pend.n}: presented at the weigh in on ${fmtDate(pend.presentOn, { weekday: "short", day: "numeric", month: "short" })}` : ""; return last ? `Week ${last.n}: ${names(last.winners)}${next ? " · " + next : ""}` : next || "–"; })())}
+      <details class="card award" id="aw-weekly">${head(IMG.weekly_award, "Weekly Challenge Award", (() => { const last = wr.filter((w) => w.done).pop(); const pend = wr.find((w) => !w.done && w.w0 <= today); const next = pend ? `Week ${pend.n}: opens ${fmtDate(pend.presentOn, { weekday: "short", day: "numeric", month: "short" })}` : ""; return last ? `Week ${last.n}: ${names(last.winners)}${next ? " · " + next : ""}` : next || "–"; })())}
         ${awardImg(IMG.weekly_award, "Stoic by Choice Weekly Challenge Award")}
-        <p class="note">For the most scorecard points in a challenge week (Tuesday to Monday). Presented at the next official Saturday weigh in, once the administrator has entered the weights. Nobody is named before then.</p>
-        ${wr.filter((w) => !w.done && w.w0 <= today).map((w) => `<p class="note">⏳ Week ${w.n} (${shortDate(w.w0)} to ${shortDate(w.w1)}): ${w.closed ? "closed" : "running"} · presented at the weigh in on <b>${w.presentOn ? fmtDate(w.presentOn, { weekday: "long", day: "numeric", month: "long" }) : "–"}</b></p>`).join("")}
-        <div class="list">${wr.filter((w) => w.done).reverse().map((w) => `<div class="item"><div class="grow"><div class="t">Week ${w.n}</div><div class="s">${shortDate(w.w0)} to ${shortDate(w.w1)}</div></div><div>${winnerChips(w.winners)}</div></div>`).join("") || `<div class="empty">No weekly awards presented yet.</div>`}</div>
+        <p class="note">For the most points in a challenge week (Tuesday to Monday). The award opens every Tuesday, the day after the week closes. The week's ⚖️ most weight lost unlocks the Biggest Loser badge (counted each time, with the date) and a treat to themselves.</p>
+        ${wr.filter((w) => !w.done && w.w0 <= today).map((w) => `<p class="note">⏳ Week ${w.n} (${shortDate(w.w0)} to ${shortDate(w.w1)}): running · opens <b>${fmtDate(w.presentOn, { weekday: "long", day: "numeric", month: "long" })}</b></p>`).join("")}
+        <div class="list">${wr.filter((w) => w.done).reverse().map((w) => `<div class="item"><div class="grow"><div class="t">Week ${w.n}</div><div class="s">${shortDate(w.w0)} to ${shortDate(w.w1)}</div></div><div>${w.winners.length ? winnerChips(w.winners) : "–"}</div></div>`).join("") || `<div class="empty">No weekly awards yet.</div>`}</div>
       </details>
 
-      <details class="card award" id="aw-monthly">${head(IMG.monthly_award, "Monthly Challenge Award", (() => { const last = mr.filter((m) => m.done).pop(); const pend = mr.find((m) => !m.done && m.presentOn && m.from <= today); const next = pend ? `${pend.label}: presented at the weigh in on ${fmtDate(pend.presentOn, { weekday: "short", day: "numeric", month: "short" })}` : ""; return last ? `${last.label}: ${names(last.winners)}${next ? " · " + next : ""}` : next || "–"; })())}
+      <details class="card award" id="aw-monthly">${head(IMG.monthly_award, "Monthly Challenge Award", (() => { const last = mr.filter((m) => m.done).pop(); const pend = mr.find((m) => !m.done && m.presentOn && m.from <= today); const next = pend ? `${pend.label}: opens ${fmtDate(pend.presentOn, { weekday: "short", day: "numeric", month: "short" })}` : ""; return last ? `${last.label}: ${names(last.winners)}${next ? " · " + next : ""}` : next || "–"; })())}
         ${awardImg(IMG.monthly_award, "Stoic by Choice Monthly Challenge Award")}
-        <p class="note">For the most scorecard points in a challenge month: 4 full challenge weeks (28 days, Tuesday to Monday), so every month is equal. Each month closes on a Monday and is presented at the official weigh in that Saturday, once the administrator has entered the weights. Nobody is named before then.</p>
-        <div class="list">${challengeMonths().map((m) => { const x = mr.find((y) => y.key === m.key) || {}; return `<div class="item"><div class="grow"><div class="t">${esc(m.label)}</div><div class="s">Presented ${x.presentOn ? fmtDate(x.presentOn, { weekday: "short", day: "numeric", month: "short" }) : "–"}</div></div><div>${x.done ? winnerChips(x.winners) : m.from <= today ? "⏳" : ""}</div></div>`; }).join("")}</div>
-        ${mr.filter((m) => !m.done && m.from <= today).map((m) => `<p class="note">⏳ ${esc(m.label)}: ${m.closed ? "closed" : "running"} · presented at the weigh in on <b>${m.presentOn ? fmtDate(m.presentOn, { weekday: "long", day: "numeric", month: "long" }) : "–"}</b></p>`).join("")}
+        <p class="note">For the most scorecard points in a challenge month: 4 full challenge weeks (28 days, Tuesday to Monday), so every month is equal. The award opens on the last day of the month (a Monday): the winner is announced to everyone at 21:00 that day.</p>
+        <div class="list">${challengeMonths().map((m) => { const x = mr.find((y) => y.key === m.key) || {}; return `<div class="item"><div class="grow"><div class="t">${esc(m.label)}</div><div class="s">Opens ${x.presentOn ? fmtDate(x.presentOn, { weekday: "short", day: "numeric", month: "short" }) : "–"}</div></div><div>${x.done ? winnerChips(x.winners) : m.from <= today ? "⏳" : ""}</div></div>`; }).join("")}</div>
+        ${mr.filter((m) => !m.done && m.from <= today).map((m) => `<p class="note">⏳ ${esc(m.label)}: running · opens <b>${m.presentOn ? fmtDate(m.presentOn, { weekday: "long", day: "numeric", month: "long" }) : "–"}</b></p>`).join("")}
 
       </details>
 
@@ -2089,6 +2185,9 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
       ${state.manualAwards.length ? `<details class="card fold"><summary>🎖️ Medals from the administrator (${state.manualAwards.length})</summary><div class="list">${state.manualAwards.slice().reverse().map((x) => `<div class="item">${avatar(x.memberId, "md")}<div class="grow"><div class="t">${esc(nameOf(x.memberId))}: ${esc(MEDAL_NAMES[x.award] || x.award)}</div><div class="s">${shortDate(x.date)}${x.note ? " · " + esc(x.note) : ""}</div></div></div>`).join("")}</div></details>` : ""}
 
       <details class="card award final" id="aw-bl">${head(!isSealed() ? IMG.bl_trophy : IMG.bl_medal_black, "Biggest Loser Award · the final award", isSealed() ? `🏆 ${rand(prizes().bl)} grand prize · 🔒 sealed` : `🏆 ${rand(prizes().bl)} · Champion: ${bl ? names([bl]) : "–"}`)}
+        <h3 style="margin:10px 0 4px">⚖️ Weekly Biggest Loser badge</h3>
+        <p class="note" style="margin-top:0">Unlocked every Tuesday by whoever lost the most weight (% of body weight) the week before. Counted each time they win it.</p>
+        <div class="list">${wr.filter((w) => w.done && (w.weightWinners || []).length).reverse().map((w) => `<div class="item"><div class="grow"><div class="t">Week ${w.n}</div><div class="s">Badge on ${fmtDate(w.presentOn, { weekday: "short", day: "numeric", month: "short" })}</div></div><div>${winnerChips(w.weightWinners)}</div></div>`).join("") || `<div class="empty">No weekly Biggest Loser yet.</div>`}</div>
         ${!isSealed() && bl ? `
           ${awardImg(IMG.bl_trophy, "Stoic by Choice Biggest Loser Award trophy")}
           <p class="center">${avatar(bl, "lg")}<br><b class="big">${esc(nameOf(bl))}</b><br><small>${(() => { const x = (R().blTop || []).find((y) => y.id === bl); return x ? fmt(x.pct, 1) + "% of starting weight lost" : ""; })()}</small></p>
@@ -2106,8 +2205,10 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
   // Me tab trophy cabinet
   function trophyCabinet(id) {
     const a = achievements(id), items = [];
-    if (a.weeklyWins) items.push([IMG.weekly_award, `Weekly Challenge Award × ${a.weeklyWins}`]);
-    if (a.monthlyWins) items.push([IMG.monthly_award, `Monthly Challenge Award × ${a.monthlyWins}`]);
+    const when = (k) => { const d = winDates(k, a); return d.length ? " (" + d.map((x) => fmtDate(x, { day: "numeric", month: "short" })).join(", ") + ")" : ""; };
+    if (a.weeklyWins) items.push([IMG.weekly_award, `Weekly Challenge Award × ${a.weeklyWins}${when("weekly")}`]);
+    if (a.weeklyLossWins) items.push([IMG.bl_medal_gold, `Biggest Loser badge (week) × ${a.weeklyLossWins}${when("bl")}`]);
+    if (a.monthlyWins) items.push([IMG.monthly_award, `Monthly Challenge Award × ${a.monthlyWins}${when("monthly")}`]);
     if (isOver() && a.isConsistent) items.push([IMG.consistent, "Most Consistent Participant"]);
     if (isOver() && a.isResilience) items.push([IMG.resilience, "Resilience Challenge Award"]);
     if (isOver() && a.isBL) items.push([IMG.bl_trophy, "Biggest Loser Award"]);
@@ -2128,7 +2229,8 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     if (act === "quote") { const [q, who] = cheer(); return toast(`“${esc(q)}”<br><small style="opacity:.8">${esc(who)}</small>`, 6000); }
     if (act === "boardmode") { const order = isSealed() ? ["week", "month"] : ["week", "month", "overall"]; state.boardMode = order[(order.indexOf(state.boardMode) + 1) % 3]; return render(); }
     if (act === "badge") { const b = BADGES[el.dataset.badge], a = achievements(meOrFirst()); const won = b.test(a);
-      return toast(`${won ? "🏅 <b>Earned:</b>" : b.lead && b.lead(a) ? "🔥 <b>You are leading:</b>" : "🔒 <b>Locked:</b>"} ${esc(b.label)}<br><small>${esc(b.how)}</small>`, 5000); }
+      const ds = winDates(el.dataset.badge, a);
+      return toast(`${won ? "🏅 <b>Earned:</b>" : b.lead && b.lead(a) ? "🔥 <b>You are leading:</b>" : "🔒 <b>Locked:</b>"} ${esc(b.label)}${ds.length ? ` <b>× ${ds.length}</b><br>🗓️ ${ds.map((x) => fmtDate(x, { weekday: "short", day: "numeric", month: "short" })).join(" · ")}` : ""}<br><small>${esc(b.how)}</small>`, 7000); }
     if (act === "milestone") return toast(`${el.dataset.state === "done" ? "✅" : el.dataset.state === "cur" ? "⭐ In progress:" : "🔒"} ${esc(el.dataset.label)}`);
     if (act === "tasknot") return toast("You can only tick today's task. Past days are locked, and future days are not open yet.");
     if (act === "task" || act === "taskToday") {
@@ -2454,6 +2556,8 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
   function bind() {
     const v = $("#view");
     $("[data-install]", v)?.addEventListener("click", installApp);
+    $("[data-celebrate]", v)?.addEventListener("click", () => { confetti(); setTimeout(confetti, 700); });
+    $$("[data-rweek]", v).forEach((b) => b.addEventListener("click", () => { state.reviewWeek = Number(b.dataset.rweek); render(); setTimeout(() => $("#myweeks")?.scrollIntoView({ block: "start" }), 30); }));
     $$("[data-kidday]", v).forEach((b) => b.addEventListener("click", () => { state.kidDay = b.dataset.kidday; render(); }));
     $("#fbForm", v)?.addEventListener("submit", async (e) => {
       e.preventDefault(); const msg = $("#fbMsg").value.trim(); if (msg.length < 3) return toast("Please write your idea or feedback.");
@@ -2725,7 +2829,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
       const beforeRewards = score(state.me).rewards;
       await addEntry("weights", entry, msg, prev && kg < prev);
       const afterRewards = score(state.me).rewards;
-      if (afterRewards > beforeRewards) { confetti(); setTimeout(() => toast(`🎁 <b>Reward unlocked!</b> ${REWARDS[Math.min(afterRewards, REWARDS.length) - 1]}. You have earned it.`, 6000), 1200); }
+      if (afterRewards > beforeRewards) { confetti(); setTimeout(() => toast(`🎁 <b>Milestone: ${(afterRewards * 2.5).toLocaleString("en-ZA")}% of your starting weight lost!</b> Treat yourself idea (not a challenge prize): ${REWARDS[Math.min(afterRewards, REWARDS.length) - 1]}.`, 8000), 1200); }
       if (first) { const p = { ...defaultProfile(), ...rec(state.me).profile, startWeight: kg }; await send({ member: state.me, action: "profile", profile: p }); render(); }
     });
 
@@ -2817,7 +2921,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
   document.getElementById("installBtn")?.addEventListener("click", installApp);
   updateInstallBtn(); window.matchMedia("(display-mode: standalone)").addEventListener?.("change", updateInstallBtn);
   // Links from reminders (e.g. /#food) open the right page.
-  window.addEventListener("load", () => { const h = location.hash.slice(1); if (h && ["food", "water", "move", "sleep", "journal", "admin", "board", "me", "inbox"].includes(h)) setTimeout(() => { go(h); history.replaceState(null, "", "/"); }, 900); });
+  window.addEventListener("load", () => { const h = location.hash.slice(1); if (h && ["food", "water", "move", "sleep", "journal", "admin", "board", "me", "inbox", "review"].includes(h)) setTimeout(() => { go(h); history.replaceState(null, "", "/"); }, 900); });
 
   // Installable app: register the service worker and catch the install prompt (Android / desktop Chrome).
   if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));

@@ -167,6 +167,9 @@ async function buildState(viewer, { adminView = false } = {}) {
     }
     shared[id] = c;
   }
+  // Week in review: the top 3 points scorers of every closed challenge week, for the celebration and the Review tab.
+  // (The official weekly trophy is still presented at the next weigh in, once the weights are in.)
+  const weekReview = weekReviewFrom(engine, participants, records, summaries, results, today);
   if (!revealed) Object.assign(results, { biggestLoser: null, consistent: [], resilience: [], ranking: [], blRank: [], effortRank: [] });
   else {
     // Podiums for the ceremony: percentage lost (official weigh ins) and effort points.
@@ -188,7 +191,7 @@ async function buildState(viewer, { adminView = false } = {}) {
   for (const p of participants) { const sm = summaries[p.memberId], r = records[p.memberId]; if (sm.lostKg > 0) aggregates.lostKg += sm.lostKg; const bw = r.profile.beforeWeight, cw = engine.latestWeight(r); if (bw && cw && bw > cw) aggregates.since2024 += bw - cw; }
   const out = {
     aggregates,
-    serverToday: today, settings, finale: { revealed, revealAt }, config: { points: config.points, pointsVersion: config.pointsVersion, treat: config.treat, water: config.water, sleep: config.sleep, steps: config.steps, prizes: config.prizes, rulesText: config.rulesText, privacyText: config.privacyText },
+    serverToday: today, settings, finale: { revealed, revealAt }, config: { points: config.points, pointsVersion: config.pointsVersion, treat: config.treat, water: config.water, sleep: config.sleep, steps: config.steps, prizes: config.prizes, rulesText: config.rulesText, privacyText: config.privacyText, monthAwards: config.monthAwards || {} },
     me: publicAccount(viewer), participants, summaries: shared, results,
     myRecord: viewer.memberId ? records[viewer.memberId] || (await getRecord(viewer.memberId)) : null,
     challenges: challenges.filter((c) => c.end >= addDays(t, -31)),
@@ -196,6 +199,7 @@ async function buildState(viewer, { adminView = false } = {}) {
     announcements: announcements.filter((x) => (!x.until || x.until >= t) && (x.to === "all" || x.to === viewer.memberId)).slice(-10).reverse(),
     // Inbox: every message ever sent to this person or to everyone (kept even after the Home banner date ends).
     myFeedback: viewer.memberId ? ((await getJ("_feedback")) || []).filter((f) => f.memberId === viewer.memberId).slice(-30).reverse().map((f) => ({ id: f.id, area: f.area, message: f.message, date: f.date, status: f.status, reply: f.reply })) : [],
+    weekReview,
     feedbackAreas: FEEDBACK_AREAS,
     myChildren: await (async () => {
       const kids = (viewer.memberId && childrenByParent(config, accounts)[viewer.memberId]) || [];
@@ -524,7 +528,8 @@ async function handleAdmin(req, body) {
       prizes: { bl: num(c.prizes?.bl ?? cur.prizes?.bl ?? 10000, 0, 1000000), effort: num(c.prizes?.effort ?? cur.prizes?.effort ?? 2000, 0, 1000000) },
       autoApprove: !!(c.autoApprove ?? cur.autoApprove), rulesText: str(c.rulesText ?? cur.rulesText, 4000), privacyText: str(c.privacyText ?? cur.privacyText, 6000),
     };
-    await setJ("_config", next); await log("changed settings and scoring", { detail: JSON.stringify(next.points) });
+    // Keep everything else saved in the config (buddies, parent links, monthly award results).
+    await setJ("_config", { ...((await getJ("_config")) || {}), ...next }); await log("changed settings and scoring", { detail: JSON.stringify(next.points) });
   } else if (a === "finale") {
     const cur = await getConfig();
     if (body.reveal) { cur.finale = { ...cur.finale, revealed: true }; await setJ("_config", cur); await log("revealed the Grand Finale results"); }
@@ -673,6 +678,18 @@ function childrenByParent(config, accounts) {
   }
   return out;
 }
+/** Week in review for every closed challenge week: most points, and most weight lost (% of body weight, adults only). */
+function weekReviewFrom(engine, participants, records, summaries, results, today) {
+  return engine.challengeWeeks().filter((w) => w.w1 < today).map((w) => {
+    const ranked = participants.map((p) => ({ id: p.memberId, pts: summaries[p.memberId] ? summaries[p.memberId].weekPts[w.n] || 0 : 0 })).filter((x) => x.pts > 0).sort((a, b) => b.pts - a.pts);
+    const top = ranked.length ? ranked[0].pts : 0, res = (results.weeks || []).find((x) => x.n === w.n) || {};
+    // Under 18s are ranked too. To keep it safe for growing bodies, their loss counts for ranking up to 1% of body weight a week
+    // (faster loss is not rewarded); the percentage shown is still their real one.
+    // Weight winners come from the shared engine (same rule as the Weekly Biggest Loser badge).
+    return { n: w.n, w0: w.w0, w1: w.w1, top, winners: ranked.filter((x) => x.pts === top).map((x) => x.id), podium: ranked.slice(0, 5), presentOn: res.presentOn || null, trophyDone: !!res.done,
+      topPct: res.topPct || 0, weightWinners: res.weightWinners || [], weightPodium: res.weightPodium || [] };
+  });
+}
 const fmtDay = (d) => new Date(d + "T12:00:00Z").toLocaleDateString("en-ZA", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 function parentMessage(reports) {
   return reports.map((c) => `${c.name}: ${c.flags.length ? c.flags.length + " flag" + (c.flags.length === 1 ? "" : "s") : "no flags ✅"}\n` + c.flags.map((f) => `⚠️ ${f.label}: ${f.how}`).join("\n") + (c.good.length ? `\n✅ Well done: ${c.good.join(", ")}` : "")).join("\n\n");
@@ -715,6 +732,66 @@ export async function runScheduled(nowHM = env("TEST_TIME") || saTime()) {
     out.backup = today;
   }
   if (today < settings.start) return out;
+  // Every Tuesday (the first day of a challenge week) from 07:00: one message to everyone celebrating last week's two winners.
+  const cwk = engine.currentWeek();
+  if (cwk.w0 === today && cwk.n > 1 && now >= mins("07:00") && (await getJ("_weekMsgSent")) !== cwk.n) {
+    await setJ("_weekMsgSent", cwk.n);
+    const accounts = await listAccounts(), active = accounts.filter((a) => a.status === "active" && a.memberId);
+    const participants = active.map((a) => ({ memberId: a.memberId, name: a.name })), records = {};
+    for (const p of participants) records[p.memberId] = await getRecord(p.memberId);
+    const { summaries, results } = engine.computeAll(participants, records);
+    const w = weekReviewFrom(engine, participants, records, summaries, results, today).find((x) => x.n === cwk.n - 1);
+    if (w) {
+      const nm = (id) => (active.find((a) => a.memberId === id) || {}).name || id, list = (ids) => ids.map(nm).join(" and ");
+      const msg = [
+        `🎉 Week ${w.n} is done and Week ${cwk.n} starts today!`,
+        w.winners.length ? `🏆 Most points: ${list(w.winners)} with ${w.top} points.` : "🏆 Most points: nobody scored points last week.",
+        w.weightWinners.length ? `⚖️ Most weight lost: ${list(w.weightWinners)}, ${String(w.topPct).replace(".", ",")}% of body weight. Biggest Loser badge unlocked. Treat yourself! 🎁` : "⚖️ Most weight lost: no weight loss was logged last week. Log your weight this week!",
+        "Congratulations! 👏🏾",
+        `Week ${cwk.n} runs ${fmtDay(cwk.w0)} to ${fmtDay(cwk.w1)}. Everyone starts on 0 points. Anyone can win this week. Let's go! 💪🏾`,
+        w.winners.length ? `🏅 Weekly Challenge badge unlocked for ${list(w.winners)}. See the Awards page.` : "",
+      ].filter(Boolean).join("\n\n");
+      const x = { id: rid(6), title: `🎉 Week ${cwk.n} starts! Congratulations to Week ${w.n}'s winners`, message: msg, to: "all", until: cwk.w0, date: today, time: nowHM, by: SENDER_SIGNATURE, kind: "newweek" };
+      const anns = (await getJ("_announcements")) || []; anns.push(x); await setJ("_announcements", anns.slice(-200));
+      out.newWeek = cwk.n;
+      const { blobs } = await db().list({ prefix: "push/" });
+      for (const b of blobs) {
+        const rec = await getJ(b.key); if (!rec || !rec.subs || !rec.subs.length) continue;
+        if ({ ...DEFAULT_PUSH_PREFS, ...(rec.prefs || {}) }.messages === false) continue;
+        await sendPush(b.key.slice(5), rec, { title: x.title, body: `${w.winners.length ? "🏆 " + list(w.winners) : ""}${w.weightWinners.length ? " · ⚖️ " + list(w.weightWinners) : ""}. Anyone can win this week. Let's go!`, url: "/#review" });
+      }
+    }
+  }
+  // 21:00 on the last day of a challenge month: announce the monthly winner to everyone and save it, so it never changes.
+  const cmon = engine.challengeMonths().find((m) => m.to === today);
+  if (cmon && now >= mins("21:00") && !((config.monthAwards || {})[cmon.key])) {
+    const accounts = await listAccounts(), active = accounts.filter((a) => a.status === "active" && a.memberId);
+    const participants = active.map((a) => ({ memberId: a.memberId, name: a.name })), records = {};
+    for (const p of participants) records[p.memberId] = await getRecord(p.memberId);
+    const { summaries } = engine.computeAll(participants, records);
+    const pts = participants.map((p) => ({ id: p.memberId, v: (summaries[p.memberId] || { monthPts: {} }).monthPts[cmon.key] || 0 })), top = Math.max(0, ...pts.map((x) => x.v));
+    const lost = participants.map((p) => { const r = records[p.memberId], pct = engine.weekLoss(r, cmon.from, cmon.to), junior = engine.isMinor(r); return { id: p.memberId, pct, rank: junior ? Math.min(pct || 0, 4) : pct }; }).filter((x) => x.pct > 0).sort((a, b) => b.rank - a.rank);
+    const wWin = lost.length ? lost.filter((x) => x.rank === lost[0].rank) : [];
+    const snap = { date: today, top, winners: top > 0 ? pts.filter((x) => x.v === top).map((x) => x.id) : [], topPct: wWin.length ? Math.max(...wWin.map((x) => x.pct)) : 0, weightWinners: wWin.map((x) => x.id) };
+    const cur = (await getJ("_config")) || {}; cur.monthAwards = { ...(cur.monthAwards || {}), [cmon.key]: snap }; await setJ("_config", cur);
+    const nm = (id) => (active.find((a) => a.memberId === id) || {}).name || id, list = (ids) => ids.map(nm).join(" and ");
+    const msg = [
+      `🎉 ${cmon.label} ends today!`,
+      snap.winners.length ? `🏆 Monthly Challenge winner: ${list(snap.winners)} with ${snap.top} points. Monthly Challenge badge unlocked!` : "🏆 Nobody scored points this month.",
+      snap.weightWinners.length ? `⚖️ Most weight lost this month: ${list(snap.weightWinners)}, ${String(snap.topPct).replace(".", ",")}% of body weight. Treat yourself! 🎁` : "",
+      "Congratulations! 👏🏾",
+      "A new month starts tomorrow. Everyone starts on 0. Anyone can win. Let's go! 💪🏾",
+    ].filter(Boolean).join("\n\n");
+    const x = { id: rid(6), title: `🏆 ${cmon.label}: congratulations to the winner!`, message: msg, to: "all", until: addDays(today, 1), date: today, time: nowHM, by: SENDER_SIGNATURE, kind: "newmonth" };
+    const anns = (await getJ("_announcements")) || []; anns.push(x); await setJ("_announcements", anns.slice(-200));
+    out.month = cmon.key;
+    const { blobs } = await db().list({ prefix: "push/" });
+    for (const b of blobs) {
+      const rec = await getJ(b.key); if (!rec || !rec.subs || !rec.subs.length) continue;
+      if ({ ...DEFAULT_PUSH_PREFS, ...(rec.prefs || {}) }.messages === false) continue;
+      await sendPush(b.key.slice(5), rec, { title: x.title, body: snap.winners.length ? `🏆 ${list(snap.winners)} · ${snap.top} points. Tap to celebrate!` : "Tap to see the month in review.", url: "/#review" });
+    }
+  }
   // 07:30: yesterday's habit flags for each child go to their parent's inbox (and phone), only when something needs attention.
   if (due("07:30") && (await getJ("_parentSent")) !== today) {
     await setJ("_parentSent", today);

@@ -673,3 +673,28 @@ details.mealgroup .list { padding-bottom: 6px; }
 /* Weekly challenge text, new every week, drawn over the picture rows */
 .ov.taskcover { background: #0B0906; border-radius: 6px; display: flex; align-items: center; justify-content: flex-start !important; text-align: left; }
 .tasktxt { color: #F3EBDD; font-size: 2.45cqw; font-weight: 600; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: .4em; }
+.seg.wrap { flex-wrap: wrap; }
+.wkday { border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; margin-top: 8px; background: #17130C; }
+.wkday summary { display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+.wkday summary::-webkit-details-marker { display: none; }
+.wkday .wsrow > b:last-child { min-width: 2.2em; text-align: right; }
+.wkday summary .grow { flex: 1; }
+/* New week celebration and Review tab */
+.newweek { text-align: center; }
+.newweek .nwbig { font-size: 3rem; line-height: 1; }
+.newweek h2 { margin: 6px 0 8px; }
+.nwwin { font-size: 1.05rem; line-height: 1.45; }
+.nwpod { display: grid; gap: 6px; margin: 10px 0; text-align: left; }
+.nwrow { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; background: #17130C; }
+.nwrow.me { border-color: var(--gold2); }
+.nwm { width: 1.6em; text-align: center; font-size: 1.2rem; }
+.nwgo { margin: 12px 0; padding: 12px; border-radius: 14px; background: var(--goldgrad); color: #1E1504; line-height: 1.45; }
+.card.hero { border-color: var(--gold2); }
+.nwtwo { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px 0; }
+.nwprize { border: 1px solid var(--gold2); border-radius: 14px; padding: 10px 8px; background: #17130C; display: grid; gap: 3px; justify-items: center; }
+.nwprize small { color: var(--gold); font-weight: 700; text-transform: uppercase; letter-spacing: .04em; font-size: .68rem; }
+.nwicon { font-size: 1.8rem; line-height: 1; }
+.nwval { color: var(--gold); }
+.nwtreat { color: var(--ink); text-transform: none !important; letter-spacing: 0 !important; font-size: .8rem !important; }
+.ov.wincov { display: flex; align-items: center; justify-content: center; }
+.wincnt { background: var(--goldgrad); color: #1E1504; font-weight: 800; font-size: 2.1cqw; border-radius: 99px; padding: .15em .6em; white-space: nowrap; box-shadow: 0 2px 6px rgba(0,0,0,.5); }

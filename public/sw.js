@@ -1,7 +1,7 @@
 // Stoic by Choice service worker: lets the app be installed on a phone and open quickly.
 // Always tries the network first so updates appear immediately; the saved copy is only used when offline.
 // Personal data (/api) is never stored on the phone by the service worker.
-const CACHE = "sbc-shell-v27";
+const CACHE = "sbc-shell-v34";
 const SHELL = ["/", "/index.html", "/styles.css", "/app.js", "/core.js", "/foods.js", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {

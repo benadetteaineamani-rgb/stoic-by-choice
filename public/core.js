@@ -236,6 +236,16 @@ export function makeEngine(ctx) {
   const latestWeight = (r) => weightOn(r, "9999-12-31");
   /** Official weight: the latest weight recorded by the administrator at or before d (or the starting weight). */
   const officialWeightOn = (r, d) => { const w = sortByDate(r.weights).filter((x) => x.verified && x.date <= d); return w.length ? w[w.length - 1].kg : startWeight(r); };
+  // Weight lost in one challenge week, as a percentage of body weight (never kg, for privacy). Everyone is
+  // ranked, under 18s included (their ranking is capped for safety in the week review). Uses the last weight logged in the week
+  // (an official weigh in first) against the last weight before the week (or the starting weight).
+  const weekLoss = (r, w0, w1) => {
+    const ws = sortByDate(r.weights), inWeek = ws.filter((x) => x.date >= w0 && x.date <= w1); if (!inWeek.length) return null;
+    const after = (inWeek.filter((x) => x.verified).pop() || inWeek[inWeek.length - 1]).kg;
+    const prev = ws.filter((x) => x.date < w0), before = prev.length ? (prev.filter((x) => x.verified).pop() || prev[prev.length - 1]).kg : startWeight(r);
+    if (!before || !after || after >= before) return 0;
+    return Math.round(((before - after) / before) * 1000) / 10;
+  };
   const hasOfficial = (r) => r.weights.some((x) => x.verified && weighDays().includes(x.date));
   // Under 18 when the age is below 18, or when marked as a junior by the administrator (age not known).
   const isMinor = (r) => !!((r.profile.age && r.profile.age < 18) || (!r.profile.age && r.profile.junior));
@@ -556,8 +566,26 @@ export function makeEngine(ctx) {
     const recorded = new Set(weighDays().filter((d) => d <= t && ids.some((id) => R(id).weights.some((x) => x.verified && x.date === d))));
     const presentOn = (end) => weighDays().find((d) => d > end) || (end >= s.end ? weighDays().find((d) => d >= end) || null : null);
     const result = (period, end, getPts) => { const on = presentOn(end), closed = end < t, done = closed && !!on && recorded.has(on); const w = winners(getPts); return { ...period, closed, presentOn: on, done, top: done ? w.top : null, winners: done ? w.winners : [] }; };
-    const weeksRes = cws.map((w) => result(w, w.w1, (id) => summaries[id].weekPts[w.n]));
-    const monthsRes = ms.map((m) => result(m, m.to, (id) => summaries[id].monthPts[m.key]));
+    // The weekly award (most points) opens every Tuesday, the day after the week closes (no waiting for a weigh in).
+    // The week's biggest weight loss is also celebrated, as a treat yourself (not an award): (% of body weight; under 18s ranked too, their loss counted up to 1% a week for safety).
+    const weekWeight = (w) => {
+      const lost = ids.map((id) => { const r = R(id), pct = weekLoss(r, w.w0, w.w1), junior = isMinor(r); return { id, pct, junior, rank: junior ? Math.min(pct || 0, 1) : pct }; })
+        .filter((x) => x.pct > 0).sort((a, b) => b.rank - a.rank || b.pct - a.pct);
+      const topRank = lost.length ? lost[0].rank : 0, win = lost.filter((x) => x.rank === topRank);
+      return { topPct: win.length ? Math.max(...win.map((x) => x.pct)) : 0, weightWinners: win.map((x) => x.id), weightPodium: lost.slice(0, 3).map((x) => ({ id: x.id, pct: x.pct, junior: x.junior })) };
+    };
+    const weeksRes = cws.map((w) => {
+      const closed = w.w1 < t, pw = winners((id) => summaries[id].weekPts[w.n]), ww = closed ? weekWeight(w) : { topPct: 0, weightWinners: [], weightPodium: [] };
+      return { ...w, closed, presentOn: addDays(w.w1, 1), done: closed, top: closed ? pw.top : null, winners: closed ? pw.winners : [], ...ww };
+    });
+    // Monthly awards open on the last day of the month: the administrator's app announces the winner at 21:00 that day and
+    // saves it (config.monthAwards), so the winner never changes afterwards. If that was missed, it is worked out the next day.
+    const snaps = (ctx.config() || {}).monthAwards || {};
+    const monthsRes = ms.map((m) => {
+      const snap = snaps[m.key], closed = m.to < t || !!snap, pw = winners((id) => summaries[id].monthPts[m.key]);
+      if (snap) return { ...m, closed: true, presentOn: snap.date || m.to, done: true, top: snap.top, winners: snap.winners || [], topPct: snap.topPct || 0, weightWinners: snap.weightWinners || [] };
+      return { ...m, closed, presentOn: m.to, done: closed, top: closed ? pw.top : null, winners: closed ? pw.winners : [] };
+    });
     const leaders = (metric) => { const v = ids.map((id) => ({ id, v: metric(id) })); const top = Math.max(-Infinity, ...v.map((x) => x.v)); return top > 0 ? v.filter((x) => x.v === top).map((x) => x.id) : []; };
     // Greatest Effort: the most points from healthy habits (check ins, movement, steps, water, sleep, journal, tasks); weight not included.
     const consistent = leaders((id) => summaries[id].habit * 1000 + summaries[id].checkins);
@@ -570,6 +598,11 @@ export function makeEngine(ctx) {
     for (const id of ids) {
       const x = summaries[id];
       x.weeklyWins = weeksRes.filter((w) => w.done && w.winners.includes(id)).length;
+      // Dates each award or badge was won, so the Awards page can show "× 2 · last on 24 Nov".
+      x.weeklyWinDates = weeksRes.filter((w) => w.done && w.winners.includes(id)).map((w) => w.presentOn);
+      x.weeklyLossDates = weeksRes.filter((w) => w.done && w.weightWinners.includes(id)).map((w) => w.presentOn);
+      x.weeklyLossWins = x.weeklyLossDates.length;
+      x.monthlyWinDates = monthsRes.filter((m) => m.done && m.winners.includes(id)).map((m) => m.presentOn);
       x.monthlyWins = monthsRes.filter((m) => m.done && m.winners.includes(id)).length;
       x.isConsistent = consistent.includes(id);
       x.isResilience = resilience.includes(id);
@@ -583,14 +616,14 @@ export function makeEngine(ctx) {
   return {
     weighDays, isWeighDay, nextWeighDay, lastWeighDay, startWeight, weightOn, latestWeight, isMinor, isChild, habitsOnly, maxRate, planRate,
     calorieFloor, energy, dayTotals, dayStatus, dayPoints, scorecard, weighResult, activeMinutes, ledger, eating, habitsOn, HABIT_KEYS, bmi, beforeJoin, challengeWeeks, currentWeek, challengeMonths, weeks, treats, score, periodScore,
-    bestStreak, challengeDay, computeAll, P, T, glasses, waterTarget, sleepTarget, sleepOn, stepGoal, daySteps, dayKm, officialWeightOn,
+    bestStreak, challengeDay, computeAll, weekLoss, P, T, glasses, waterTarget, sleepTarget, sleepOn, stepGoal, daySteps, dayKm, officialWeightOn,
   };
 }
 
 // Badges (achievements) derived from a member's official summary.
 export const BADGES = {
-  weekly: { label: "Weekly Challenge", test: (a) => a.weeklyWins > 0, how: "Score the most points in a challenge week." },
-  monthly: { label: "Monthly Challenge", test: (a) => a.monthlyWins > 0, how: "Score the most points in a calendar month." },
+  weekly: { label: "Weekly Challenge", test: (a) => a.weeklyWins > 0, dates: "weeklyWinDates", how: "Score the most points in a challenge week." },
+  monthly: { label: "Monthly Challenge", test: (a) => a.monthlyWins > 0, dates: "monthlyWinDates", how: "Score the most points in a challenge month (4 weeks). Opens on the last day of the month." },
   consistency: { label: "Consistency Star", test: (a) => a.bestStreak >= 7, how: "Check in 7 days in a row." },
   movement: { label: "Movement Hero", test: (a) => a.maxWeekMins >= 150, how: "Exercise 150 minutes in one challenge week." },
   hydration: { label: "Hydration Hero", test: (a) => a.waterGoalDays >= 7, how: "Reach your water goal on 7 days." },
@@ -603,7 +636,7 @@ export const BADGES = {
   discipline: { label: "Discipline Champion", test: (a) => a.bestStreak >= 14, how: "Check in 14 days in a row." },
   team: { label: "Team Player", test: (a) => a.weighIns >= 3, how: "Attend 3 official Saturday weigh ins." },
   transformation: { label: "Biggest Transformation", test: (a) => a.pct >= 5, how: "Lose 5% of your starting weight." },
-  bl: { label: "Biggest Loser Award", test: (a) => a.isBL && a.over, lead: (a) => a.isBL, how: "Lose the highest percentage of your starting weight, measured at the official weigh ins. Revealed at the Grand Finale." },
+  bl: { label: "Biggest Loser Award", test: (a) => a.weeklyLossWins > 0 || (a.isBL && a.over), dates: "weeklyLossDates", lead: (a) => a.isBL, how: "Unlocked every time you lose the most weight (% of body weight) in a challenge week, counted each time you win it. The final Biggest Loser Award (highest % of starting weight lost at the official weigh ins) is revealed at the Grand Finale." },
   resilienceAward: { label: "Resilience Challenge Award", test: (a) => a.isResilience && a.over, lead: (a) => a.isResilience, how: "Log the most exercise minutes by the end of the challenge." },
   consistentAward: { label: "Most Consistent Participant · Greatest Effort", test: (a) => a.isConsistent && a.over, lead: (a) => a.isConsistent, how: "Earn the most points from healthy habits: movement, steps, water, sleep, journal and check ins. Revealed at the Grand Finale." },
   grand: { label: "Grand Champion", test: (a) => a.isBL && a.over, how: "Win the Biggest Loser Award at the end of the challenge." },
