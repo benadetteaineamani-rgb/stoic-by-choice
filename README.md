@@ -57,6 +57,19 @@ Adding food: 1. meal, 2. time eaten, 3. tap a category, 4. choose the food from 
 * The latest message still shows on Home, with an "Open inbox" button.
 * People with reminders turned on also get a phone notification ("📣 Messages and announcements", on by default; it can be switched off under reminders). Tapping it opens the inbox.
 
+## ⭐ Junior easy check (under 18s)
+
+* Under 18s see "⭐ My day: tap one for each" on Home and on the Log tab instead of the detailed forms: 5 questions, one tap each, changeable all day.
+  * 🍽️ Meals: Breakfast, Lunch, Dinner (and Snack if they had one): 🥺 Too little · 👍 Enough · 😋 Too much · ⏭️ Skipped (snack: 🚫 No snack)
+  * ⏰ Did you wait 5 hours between meals? Yes · No
+  * 🍬 Foods off the plan, how many? Sweets, chocolate, chips, cool drink or juice, biscuits or cake, ice cream, takeaway (− / + counters)
+  * 🏃🏾 Move: Yes, 20+ minutes · A little · Not yet
+  * 💧 Water: 8 glasses or more · A few · Hardly any
+  * 😴 Sleep last night: Slept well · Okay · Badly
+  * 📓 My day: Great · Good · So so · Not good (counts as the journal)
+* Same points as adults: breakfast, lunch and dinner answered (not skipped) count as the 3 meals; a skipped meal is a skipped meal, as for adults. Too much, too little, not waiting 5 hours and foods off the plan are gentle flags (at most 3 a day, so they never trigger the bad habit penalty) that also go to their parents; "Yes, 20+ minutes" counts as Move; "8 glasses or more" as Water; "Slept well" or "Okay" as Sleep; the mood as Journal. "Too much" and "Too little" are gentle flags that also go to their parents.
+* It started on 28 November 2026: earlier days, points and logs are unchanged. Juniors who want to can still tap "📝 I want to log details instead"; "⭐ Back to my easy check" returns. Adults see no change.
+
 ## 🏅 Badges that count, and monthly awards
 
 * **Weekly Challenge badge** (most points): unlocked every Tuesday for last week's winner.

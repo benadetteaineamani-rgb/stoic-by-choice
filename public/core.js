@@ -188,7 +188,7 @@ export function todaySA(now = new Date()) {
   return `${g("year")}-${g("month")}-${g("day")}`;
 }
 export const holiday = (d) => HOLIDAYS[d] || null;
-export const emptyRecord = () => ({ profile: {}, foods: [], exercises: [], weights: [], treats: [], tasks: [], reflections: [], challenges: [], water: [], sleep: [], steps: [], checkins: [], measures: [], routine: [] });
+export const emptyRecord = () => ({ profile: {}, foods: [], exercises: [], weights: [], treats: [], tasks: [], reflections: [], challenges: [], water: [], sleep: [], steps: [], checkins: [], measures: [], routine: [], quick: [] });
 // Picture journal: tap what you did today, no writing needed.
 export const JOURNAL_CHECKS = [
   ["veg", "🥦", "I ate vegetables"], ["fruit", "🍎", "I ate fruit"], ["water", "🥛", "I drank water"], ["moved", "🏃🏾", "I moved my body"],
@@ -210,13 +210,30 @@ export function makeEngine(ctx) {
   const T = () => ({ ...DEFAULT_CONFIG.treat, ...((ctx.config() || {}).treat || {}) });
   const waterTarget = () => ((ctx.config() || {}).water || DEFAULT_CONFIG.water).target || 8;
   const sleepTarget = (r) => Math.max(((ctx.config() || {}).sleep || DEFAULT_CONFIG.sleep).target || 7, r && r.profile && r.profile.age && r.profile.age < 18 ? 8 : 0);
-  const sleepOn = (r, d) => (r.sleep || []).find((x) => x.date === d) || null;
+  // Junior easy check (under 18s): one tap per habit instead of detailed logging. Each answer stands in for the detailed log.
+  const QUICK = {
+    food: { much: "😋 Too much", ok: "👍 On point", little: "🥺 Too little" },
+    move: { yes: "🏃🏾 Yes, 20+ minutes", bit: "🚶🏾 A little", no: "🛋️ Not yet" },
+    water: { lots: "💧 8 glasses or more", some: "🥤 A few glasses", little: "🌵 Hardly any" },
+    sleep: { good: "😴 Slept well", ok: "🙂 Okay", bad: "🥱 Badly" },
+    mood: { great: "😀 Great", good: "🙂 Good", meh: "😐 So so", sad: "😞 Not good" },
+    gap: { yes: "✅ Yes, 5 hours", no: "❌ No, I ate in between" },
+    meal: { little: "🥺 Too little", ok: "👍 Enough", much: "😋 Too much", skip: "⏭️ Skipped" },
+    snack: { little: "🥺 Too little", ok: "👍 Enough", much: "😋 Too much", none: "🚫 No snack" },
+  };
+  // Juniors tap each meal; snack is optional. Foods off the plan are counted ("how many?").
+  const QUICK_MEALS = [["breakfast", "🍳", "Breakfast"], ["lunch", "🥪", "Lunch"], ["dinner", "🍲", "Dinner"], ["snack", "🍎", "Snack"]];
+  // [key, icon, label, plural, singular]
+  const OFF_PLAN = [["sweets", "🍬", "Sweets", "sweets", "sweet"], ["chocolate", "🍫", "Chocolate", "chocolates", "chocolate"], ["chips", "🍟", "Chips or crisps", "packets of chips", "packet of chips"], ["cooldrink", "🥤", "Cool drink or juice", "cool drinks", "cool drink"], ["biscuits", "🍪", "Biscuits or cake", "biscuits or slices of cake", "biscuit or slice of cake"], ["icecream", "🍦", "Ice cream", "ice creams", "ice cream"], ["takeaway", "🍔", "Takeaway or fast food", "takeaways", "takeaway"]];
+  const quickOn = (r, d, kind) => { const q = (r.quick || []).find((x) => x.date === d && x.kind === kind); return q ? q.value : null; };
+  const QUICK_SLEEP = { good: 9, ok: 8, bad: 5 }, QUICK_WATER = { lots: 8, some: 4, little: 1 };
+  const sleepOn = (r, d) => (r.sleep || []).find((x) => x.date === d) || (quickOn(r, d, "sleep") ? { date: d, hours: QUICK_SLEEP[quickOn(r, d, "sleep")], quick: true } : null);
   const stepGoal = () => ((ctx.config() || {}).steps || DEFAULT_CONFIG.steps).goal || 7500;
   /** Steps for a day: the phone's daily total if logged, otherwise steps recorded with activities. */
   // The phone's daily total already includes steps taken during activities, so take the larger of the two (never add them).
   const daySteps = (r, d) => { const x = (r.steps || []).find((s) => s.date === d); const act = r.exercises.filter((e) => e.date === d).reduce((a, e) => a + (e.steps || 0), 0); return Math.max(x ? x.steps : 0, act); };
   const dayKm = (r, d) => { const k = r.exercises.filter((e) => e.date === d).reduce((a, e) => a + (e.distanceKm || 0), 0); return k || Math.round(daySteps(r, d) * 0.00075 * 10) / 10; };
-  const glasses = (r, d) => ((r.water || []).find((x) => x.date === d) || {}).glasses || 0;
+  const glasses = (r, d) => Math.max(((r.water || []).find((x) => x.date === d) || {}).glasses || 0, quickOn(r, d, "water") === "lots" ? waterTarget() : QUICK_WATER[quickOn(r, d, "water")] || 0);
   const today = () => ctx.today();
   const defs = () => (ctx.challengeDefs ? ctx.challengeDefs() : []) || [];
 
@@ -276,15 +293,15 @@ export function makeEngine(ctx) {
     burned: r.exercises.filter((e) => e.date === d).reduce((s, e) => s + e.kcal, 0),
   });
   function dayStatus(r, d) {
-    const food = r.foods.some((x) => x.date === d), ex = r.exercises.some((x) => x.date === d), wt = r.weights.some((x) => x.date === d);
-    const task = r.tasks.some((x) => x.date === d), reflect = r.reflections.some((x) => x.date === d), chal = r.challenges.some((x) => x.date === d);
+    const food = r.foods.some((x) => x.date === d) || !!quickOn(r, d, "food") || ["breakfast", "lunch", "dinner", "snack"].some((k) => quickOn(r, d, k)), ex = r.exercises.some((x) => x.date === d), wt = r.weights.some((x) => x.date === d);
+    const task = r.tasks.some((x) => x.date === d), reflect = r.reflections.some((x) => x.date === d) || !!quickOn(r, d, "mood"), chal = r.challenges.some((x) => x.date === d);
     const g = glasses(r, d), water = g > 0, waterGoal = g >= waterTarget();
     const sl = sleepOn(r, d), slept = !!sl, sleepGoal = !!sl && sl.hours >= sleepTarget(r);
     const stp = daySteps(r, d), stepsGoal = stp >= stepGoal(), wtv = r.weights.some((x) => x.date === d && x.verified);
     const checkin = (r.checkins || []).some((x) => x.date === d);
-    return { food, ex, wt, wtv, task, reflect, chal, water, waterGoal, glasses: g, slept, sleepGoal, steps: stp, stepsGoal, checkin, any: checkin || food || ex || wt || task || reflect || chal || water || slept || stp > 0 || (r.routine || []).some((x) => x.date === d) };
+    return { food, ex, wt, wtv, task, reflect, chal, water, waterGoal, glasses: g, slept, sleepGoal, steps: stp, stepsGoal, checkin, any: checkin || food || ex || wt || task || reflect || chal || water || slept || stp > 0 || (r.routine || []).some((x) => x.date === d) || (r.quick || []).some((x) => x.date === d) };
   }
-  const activeMinutes = (r, d) => r.exercises.filter((e) => e.date === d).reduce((a, e) => a + (e.minutes || 0), 0);
+  const activeMinutes = (r, d) => r.exercises.filter((e) => e.date === d).reduce((a, e) => a + (e.minutes || 0), 0) + ({ yes: MOVE_MINUTES, bit: 10 }[quickOn(r, d, "move")] || 0);
   /** The daily scorecard: the ONLY source of daily points. Each item counts once per day. */
   /** Meals logged on a day (Breakfast or Meal 1, Lunch or Meal 2, Dinner or Meal 3; snacks do not count) and whether it was too little food. */
   function eating(r, d) {
@@ -302,6 +319,25 @@ export function makeEngine(ctx) {
     if (provitas > provMax) flags.push({ k: "provita", label: "Too many Provitas", how: `${provitas} today. The allowance is ${provMax}` });
     const w = weekOf(d), weekFoods = w ? r.foods.filter((f) => f.date >= w.w0 && f.date <= w.w1) : foods;
     flags.push(...planFlags(r, d, foods, weekFoods));
+    // Junior easy check: an honest one tap answer counts as logging the day's food (no starving penalty); too much or too little is flagged gently.
+    const qf = quickOn(r, d, "food");
+    const qm = {}; for (const [k] of QUICK_MEALS) qm[k] = quickOn(r, d, k);
+    const off = OFF_PLAN.map(([k, i, l, pl, one]) => { const n = Number(quickOn(r, d, "off_" + k) || 0); return [n === 1 ? one : pl, n]; }).filter(([, n]) => n > 0);
+    if (!foods.length && (QUICK_MEALS.some(([k]) => qm[k]) || off.length)) {
+      const main = ["breakfast", "lunch", "dinner"], name = { breakfast: "breakfast", lunch: "lunch", dinner: "dinner", snack: "snack" }, and = (a) => a.length > 1 ? a.slice(0, -1).join(", ") + " and " + a[a.length - 1] : a[0];
+      const eaten = main.filter((k) => qm[k] && qm[k] !== "skip").length;
+      const much = QUICK_MEALS.map(([k]) => k).filter((k) => qm[k] === "much"), little = QUICK_MEALS.map(([k]) => k).filter((k) => qm[k] === "little");
+      const qflags = [];
+      if (much.length) qflags.push({ k: "quickmuch", label: `Too much at ${and(much.map((k) => name[k]))}`, how: "Tomorrow: smaller portions, water before meals, vegetables first" });
+      if (little.length) qflags.push({ k: "quicklittle", label: `Too little at ${and(little.map((k) => name[k]))}`, how: "Growing bodies need proper meals. Tell a parent if you were not hungry or could not eat" });
+      if (quickOn(r, d, "gap") === "no") qflags.push({ k: "quickgap", label: "Did not wait 5 hours between meals", how: "Leave about 5 hours between meals, with only water in between" });
+      if (off.length) qflags.push({ k: "offplan", label: "Foods off the plan", how: off.map(([pl, n]) => `${n} ${pl}`).join(", ") });
+      return { meals: eaten, kcal: 0, minKcal: 0, onPlan, fruit: 0, provitas: 0, flags: qflags, tooLittle: false, enough: eaten >= MEALS_NEEDED, quick: "meals", quickMeals: qm, off };
+    }
+    if (qf && !foods.length) {
+      const qflags = qf === "much" ? [{ k: "quickmuch", label: "Ate too much today", how: "Tomorrow: smaller portions, water before meals, vegetables first" }] : qf === "little" ? [{ k: "quicklittle", label: "Ate too little today", how: "Growing bodies need 3 proper meals. Tell a parent if you were not hungry or could not eat" }] : [];
+      return { meals: MEALS_NEEDED, kcal: 0, minKcal: 0, onPlan, fruit: 0, provitas: 0, flags: qflags, tooLittle: false, enough: true, quick: qf };
+    }
     return { meals, kcal, minKcal, onPlan, fruit, provitas, flags, tooLittle: foods.length > 0 && kcal < minKcal, enough: meals >= MEALS_NEEDED && !(kcal < minKcal) };
   }
   /** Result of an official weigh in compared with the previous official weight. Gain −10, no loss or less than the minimum −5 / +3, minimum met +5. */
@@ -328,7 +364,7 @@ export function makeEngine(ctx) {
     const items = [
       { k: "checkin", icon: "👋🏾", label: "Check in", how: "Tap the big button, or log anything", pts: p.checkin, done: st.any },
       ruleOn
-        ? { k: "food", icon: "🍽️", label: "Eat and log 3 meals", how: eat.minKcal ? `Breakfast, lunch and dinner, at least ${eat.minKcal.toLocaleString("en-ZA")} kcal` : "Meal 1, Meal 2 and Meal 3 from your plan", pts: p.food, done: eat.enough, progress: eat.enough ? "" : `${eat.meals} of ${MEALS_NEEDED} meals${eat.tooLittle && eat.meals >= MEALS_NEEDED ? ` · only ${eat.kcal} kcal` : ""}`, warn: !eat.enough }
+        ? { k: "food", icon: "🍽️", label: eat.quick ? "Food check" : "Eat and log 3 meals", how: eat.quick === "meals" ? "Tap breakfast, lunch and dinner" : eat.quick ? `You said: ${QUICK.food[eat.quick]}` : eat.minKcal ? `Breakfast, lunch and dinner, at least ${eat.minKcal.toLocaleString("en-ZA")} kcal` : "Meal 1, Meal 2 and Meal 3 from your plan", pts: p.food, done: eat.enough, progress: eat.enough ? "" : `${eat.meals} of ${MEALS_NEEDED} meals${eat.tooLittle && eat.meals >= MEALS_NEEDED ? ` · only ${eat.kcal} kcal` : ""}`, warn: !eat.enough }
         : { k: "food", icon: "🍽️", label: "Log your food", how: "At least one meal", pts: p.food, done: st.food },
       { k: "move", icon: "👟", label: "Move", how: `${MOVE_MINUTES} active minutes or ${stepGoal().toLocaleString("en-ZA")} steps`, pts: p.exercise, done: mins >= MOVE_MINUTES || st.stepsGoal, progress: mins >= MOVE_MINUTES || st.stepsGoal ? "" : mins ? `${mins} of ${MOVE_MINUTES} min` : st.steps ? `${st.steps.toLocaleString("en-ZA")} steps` : "" },
       { k: "water", icon: "glass", label: "Drink water", how: `${waterTarget()} glasses of 250 ml (${(waterTarget() * 0.25).toString().replace(".", ",")} litres)`, pts: p.water, done: st.waterGoal, progress: st.glasses && !st.waterGoal ? `${st.glasses} of ${waterTarget()}` : "" },
@@ -616,7 +652,7 @@ export function makeEngine(ctx) {
   return {
     weighDays, isWeighDay, nextWeighDay, lastWeighDay, startWeight, weightOn, latestWeight, isMinor, isChild, habitsOnly, maxRate, planRate,
     calorieFloor, energy, dayTotals, dayStatus, dayPoints, scorecard, weighResult, activeMinutes, ledger, eating, habitsOn, HABIT_KEYS, bmi, beforeJoin, challengeWeeks, currentWeek, challengeMonths, weeks, treats, score, periodScore,
-    bestStreak, challengeDay, computeAll, weekLoss, P, T, glasses, waterTarget, sleepTarget, sleepOn, stepGoal, daySteps, dayKm, officialWeightOn,
+    bestStreak, challengeDay, computeAll, weekLoss, QUICK, quickOn, QUICK_MEALS, OFF_PLAN, P, T, glasses, waterTarget, sleepTarget, sleepOn, stepGoal, daySteps, dayKm, officialWeightOn,
   };
 }
 

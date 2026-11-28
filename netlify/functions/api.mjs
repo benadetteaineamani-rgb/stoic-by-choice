@@ -248,7 +248,7 @@ async function markJoined(memberId) {
 
 // ---------- validation of participant entries ----------
 const ABOUT_KEYS = ["favFoods", "favExercise", "biggestChallenge", "motivation", "support"];
-const TYPES = ["foods", "exercises", "weights", "treats", "tasks", "reflections", "challenges", "water", "sleep", "steps", "checkins", "measures", "routine"];
+const TYPES = ["foods", "exercises", "weights", "treats", "tasks", "reflections", "challenges", "water", "sleep", "steps", "checkins", "measures", "routine", "quick"];
 function cleanEntry(type, e = {}, today) {
   const base = { id: str(e.id, 40) || rid(6), date: isDate(e.date) ? e.date : null };
   if (!base.date || base.date > today || base.date < "2026-11-01") throw httpErr(400, "That date cannot be used.");
@@ -279,6 +279,15 @@ function cleanFood(e, base, today) {
   }
 }
 function cleanOther(type, e, base, today) {
+  if (type === "quick") {
+    const meal = ["little", "ok", "much", "skip"], counts = Array.from({ length: 16 }, (_, i) => String(i));
+    const opts = { food: ["much", "ok", "little"], move: ["yes", "bit", "no"], water: ["lots", "some", "little"], sleep: ["good", "ok", "bad"], mood: ["great", "good", "meh", "sad"],
+      breakfast: meal, lunch: meal, dinner: meal, gap: ["yes", "no"], snack: ["little", "ok", "much", "none"],
+      off_sweets: counts, off_chocolate: counts, off_chips: counts, off_cooldrink: counts, off_biscuits: counts, off_icecream: counts, off_takeaway: counts };
+    e.value = String(e.value);
+    if (!opts[e.kind] || !opts[e.kind].includes(e.value)) throw httpErr(400, "Please choose one of the answers.");
+    return { ...base, kind: e.kind, value: e.value };
+  }
   if (type === "routine") {
     const kind = ["vitamin", "meditate", "write"].includes(e.kind) ? e.kind : null;
     if (!kind) throw httpErr(400, "Unknown routine.");
@@ -392,6 +401,7 @@ async function handleData(req, body) {
   } else if (body.action === "add" && TYPES.includes(body.type)) {
     const e = cleanEntry(body.type, body.entry, today);
     if (body.type === "routine") r.routine = (r.routine || []).filter((x) => !(x.date === e.date && x.kind === e.kind));
+    if (body.type === "quick") r.quick = (r.quick || []).filter((x) => !(x.date === e.date && x.kind === e.kind)); // one answer per habit per day; tapping again changes it
     // Honesty rule: entries can only be made for today (South African time). No back dating, no future dates.
     if (e.date !== today) throw httpErr(400, "You can only log things for today. Missed days cannot be filled in afterwards.");
     if (body.type === "treats") {

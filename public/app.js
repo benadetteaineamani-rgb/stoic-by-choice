@@ -207,7 +207,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
   // ---------- Rules engine (the same code the server uses for the official points) ----------
   const E = makeEngine({ settings, config: () => state.config, today: todayStr, challengeDefs: () => state.challenges, adjustments: () => [] });
   const { weighDays, isWeighDay, nextWeighDay, lastWeighDay, startWeight, weightOn, latestWeight, isMinor, isChild, habitsOnly, maxRate,
-    planRate, calorieFloor, energy, dayTotals, dayStatus, dayPoints, scorecard, weighResult, activeMinutes, ledger, eating, habitsOn, HABIT_KEYS, bmi, weeks, treats, challengeDay, challengeWeeks, currentWeek, challengeMonths, glasses, waterTarget, sleepTarget, sleepOn, stepGoal, daySteps, dayKm, officialWeightOn } = E;
+    planRate, calorieFloor, energy, dayTotals, dayStatus, dayPoints, scorecard, weighResult, activeMinutes, ledger, eating, habitsOn, HABIT_KEYS, bmi, weeks, treats, challengeDay, challengeWeeks, currentWeek, challengeMonths, glasses, waterTarget, sleepTarget, sleepOn, stepGoal, daySteps, dayKm, officialWeightOn, QUICK, quickOn, QUICK_MEALS, OFF_PLAN } = E;
   const treatOn = (r, d) => (r.treats || []).some((t) => t.date === d);
   const sortByDate = (arr) => [...arr].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const ZERO = {
@@ -557,7 +557,7 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     $$("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === state.tab));
     if (!signedIn) { $("#view").innerHTML = viewAuth(); bindAuth(); return; }
     if (state.pending || !state.me) { $("#view").innerHTML = viewPending(); bindAuth(); return; }
-    const views = { today: viewToday, challenge: viewChallenge, log: () => ({ move: viewMove, water: viewWater, sleep: viewSleep, journal: viewJournal }[state.logMode] || viewFood)(), food: viewFood, move: viewMove, board: viewBoard, awards: viewAwards, calendar: viewCalendar, profile: viewProfile, recipes: viewRecipes, inbox: viewInbox, review: viewReview, calc: viewCalc, me: viewMe, admin: viewAdmin };
+    const views = { today: viewToday, challenge: viewChallenge, log: () => isJunior() && !state.junDetail ? juniorCard() : ({ move: viewMove, water: viewWater, sleep: viewSleep, journal: viewJournal }[state.logMode] || viewFood)(), food: viewFood, move: viewMove, board: viewBoard, awards: viewAwards, calendar: viewCalendar, profile: viewProfile, recipes: viewRecipes, inbox: viewInbox, review: viewReview, calc: viewCalc, me: viewMe, admin: viewAdmin };
     if (state.tab === "admin" && a.role !== "admin") state.tab = "today";
     const canBack = state.tab !== "today" || navStack.length > 0, canFwd = fwdStack.length > 0;
     $("#view").innerHTML = (canBack || canFwd ? `<div class="navrow"><button class="backbtn" data-back ${canBack ? "" : "disabled"}>‹ Back</button><button class="backbtn fwd" data-fwd ${canFwd ? "" : "disabled"}>Forward ›</button></div>` : "") + (views[state.tab] || viewToday)();
@@ -991,8 +991,44 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
       ${out.map(([i, tx]) => `<div class="tipline insight">${i} ${tx}</div>`).join("")}</section>`;
   }
 
+  // ---------- Junior easy check: one tap per habit for under 18s ----------
+  const JUNIOR_ROWS = [["move", "🏃🏾", "Did you move or play today?"], ["water", "💧", "How much water today?"], ["sleep", "😴", "How did you sleep last night?"], ["mood", "📓", "How was your day?"]];
+  const isJunior = () => !!(state.me && isMinor(rec(state.me)));
+  function juniorCard() {
+    const r = rec(state.me), d = todayStr(), pts = dayPoints(r, d);
+    const need = [["breakfast"], ["lunch"], ["dinner"], ["gap"], ...JUNIOR_ROWS], done = need.filter(([k]) => quickOn(r, d, k)).length, total = need.length;
+    const opts = (k, set) => { const cur = quickOn(r, d, k); return `<div class="jopts ${Object.keys(set).length === 4 ? "n4" : ""}">${Object.entries(set).map(([v, l]) => `<button type="button" class="jopt ${cur === v ? "on" : ""}" data-q="${k}" data-v="${v}">${l}</button>`).join("")}</div>`; };
+    return `<section class="card junior"><h2>⭐ My day: tap one for each</h2>
+      <p class="note" style="margin-top:0">Just tap what fits. You can change it any time today. <b>${done} of ${total} done</b> · <b>${pts} points today</b></p>
+      <div class="jbar"><span style="width:${Math.round((done / total) * 100)}%"></span></div>
+      <h3 class="jh">🍽️ My meals today</h3>
+      ${QUICK_MEALS.map(([k, icon, l]) => `<div class="jrow"><div class="jq">${icon} ${l}${k === "snack" ? ' <small class="muted">(if you had one)</small>' : ""}</div>${opts(k, k === "snack" ? QUICK.snack : QUICK.meal)}</div>`).join("")}
+      <div class="jrow"><div class="jq">⏰ Did you wait 5 hours between meals?</div>${opts("gap", QUICK.gap)}</div>
+      <h3 class="jh">🍬 Foods off the plan today: how many?</h3>
+      <div class="joff">${OFF_PLAN.map(([k, icon, l]) => { const n = Number(quickOn(r, d, "off_" + k) || 0); return `<div class="joffrow ${n ? "has" : ""}"><span class="grow">${icon} ${l}</span><button type="button" class="jcnt" data-off="${k}" data-step="-1" ${n ? "" : "disabled"} aria-label="One less">−</button><b class="jn">${n}</b><button type="button" class="jcnt" data-off="${k}" data-step="1" aria-label="One more">+</button></div>`; }).join("")}</div>
+      <p class="note">Be honest: it helps you, and it never costs points on its own.</p>
+      <h3 class="jh">⭐ The rest of my day</h3>
+      ${JUNIOR_ROWS.map(([k, icon, q]) => `<div class="jrow"><div class="jq">${icon} ${q}</div>${opts(k, QUICK[k])}</div>`).join("")}
+      ${done === total ? `<div class="jdone">🎉 All done for today. Well done!</div>` : ""}
+      <button type="button" class="btn ghost full small" data-jdetail style="margin-top:10px">📝 I want to log details instead (optional)</button></section>`;
+  }
+  const JUNIOR_REPLY = { much: "Thanks for being honest! Next time try a smaller portion and water first. 💪🏾", ok: "Brilliant! Just enough. 🌟", little: "Thanks for telling us. Growing bodies need proper meals; talk to your parent. 💛", skip: "Try not to skip meals: your body needs fuel to grow. 💛", none: "No snack: noted! 👍🏾", yes_gap: "Well done waiting 5 hours! ⏰", no_gap: "Next time, only water between meals. You can do it! 💧", yes: "Great moving! 🏃🏾", bit: "Every bit counts. Try for 20 minutes tomorrow!", no: "There is still time: dance, skip or walk for 20 minutes! 🕺🏾", lots: "Well hydrated! 💧", some: "Good start; a few more glasses! 🥤", little_w: "Grab a glass of water now! 💧", good: "Rested and ready! 😴", bad: "Try an earlier bedtime tonight. 🌙", great: "Love that! 😀", meh: "Tomorrow is a new chance. 🌱", sad: "Thanks for sharing. Talk to someone you trust. 💛" };
+  const JUNIOR_REPLY_BY = {
+    gap: { yes: "Well done waiting 5 hours! ⏰", no: "Next time, only water between meals. You can do it! 💧" },
+    water: { little: "Grab a glass of water now! 💧" },
+    sleep: { good: "Rested and ready! 😴", ok: "Okay sleep counts. Try for an earlier bedtime! 🌙", bad: "Try an earlier bedtime tonight. 🌙" },
+    mood: { great: "Love that! 😀", good: "Good day! Keep it up. 🙂", meh: "Tomorrow is a new chance. 🌱", sad: "Thanks for sharing. Talk to someone you trust. 💛" },
+  };
   function viewToday() {
+    if (isJunior() && !state.junDetail) return `${installCard()}
+      ${juniorCard()}
+      ${activitiesCard()}
+      ${buddyCard()}
+      ${announcementsCard()}
+      ${homeScreen()}
+      ${stoicCard()}`;
     return `${installCard()}
+      ${isJunior() ? `<button type="button" class="btn full" data-jeasy style="margin-bottom:12px">⭐ Back to my easy check</button>` : ""}
       ${bigCheckin()}
       ${maintenanceCard()}
       ${activitiesCard()}
@@ -2558,6 +2594,18 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     $("[data-install]", v)?.addEventListener("click", installApp);
     $("[data-celebrate]", v)?.addEventListener("click", () => { confetti(); setTimeout(confetti, 700); });
     $$("[data-rweek]", v).forEach((b) => b.addEventListener("click", () => { state.reviewWeek = Number(b.dataset.rweek); render(); setTimeout(() => $("#myweeks")?.scrollIntoView({ block: "start" }), 30); }));
+    $$("[data-q]", v).forEach((b) => b.addEventListener("click", async () => {
+      const k = b.dataset.q, val = b.dataset.v;
+      if (quickOn(rec(state.me), todayStr(), k) === val) return;
+      await addEntry("quick", { id: uid(), date: todayStr(), kind: k, value: val }, (JUNIOR_REPLY_BY[k] || {})[val] || JUNIOR_REPLY[val] || "Saved! ⭐");
+    }));
+    $$("[data-off]", v).forEach((b) => b.addEventListener("click", async () => {
+      const k = b.dataset.off, n = Math.max(0, Math.min(15, Number(quickOn(rec(state.me), todayStr(), "off_" + k) || 0) + Number(b.dataset.step)));
+      const item = OFF_PLAN.find((x) => x[0] === k);
+      await addEntry("quick", { id: uid(), date: todayStr(), kind: "off_" + k, value: String(n) }, n ? `${item[1]} ${n} ${n === 1 ? item[4] : item[3]} today. Thanks for being honest!` : `${item[1]} Back to 0. 👍🏾`);
+    }));
+    $("[data-jdetail]", v)?.addEventListener("click", () => { state.junDetail = true; render(); toast("Detailed logging is on. Tap ⭐ Easy check on Home to go back."); });
+    $("[data-jeasy]", v)?.addEventListener("click", () => { state.junDetail = false; render(); });
     $$("[data-kidday]", v).forEach((b) => b.addEventListener("click", () => { state.kidDay = b.dataset.kidday; render(); }));
     $("#fbForm", v)?.addEventListener("submit", async (e) => {
       e.preventDefault(); const msg = $("#fbMsg").value.trim(); if (msg.length < 3) return toast("Please write your idea or feedback.");
