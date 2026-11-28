@@ -12,7 +12,7 @@
 //   SESSION_SECRET  long random text used to sign sign in tokens
 import crypto from "node:crypto";
 import { getStore } from "@netlify/blobs";
-import { JOURNAL_CHECKS, makeEngine, DEFAULT_CONFIG, DEFAULT_SETTINGS, AVATARS, PRIVATE_FIELDS, SEALED_FIELDS, finaleTime, normRecord, POINTS_VERSION, todaySA as realToday, addDays } from "../../public/core.js";
+import { JOURNAL_CHECKS, makeEngine, DEFAULT_CONFIG, DEFAULT_SETTINGS, AVATARS, PRIVATE_FIELDS, SEALED_FIELDS, finaleTime, normRecord, POINTS_VERSION, APP_VERSION, todaySA as realToday, addDays } from "../../public/core.js";
 import { FOOD_BY_ID } from "../../public/foods.js";
 import webpush from "web-push";
 
@@ -191,7 +191,7 @@ async function buildState(viewer, { adminView = false } = {}) {
   for (const p of participants) { const sm = summaries[p.memberId], r = records[p.memberId]; if (sm.lostKg > 0) aggregates.lostKg += sm.lostKg; const bw = r.profile.beforeWeight, cw = engine.latestWeight(r); if (bw && cw && bw > cw) aggregates.since2024 += bw - cw; }
   const out = {
     aggregates,
-    serverToday: today, settings, finale: { revealed, revealAt }, config: { points: config.points, pointsVersion: config.pointsVersion, treat: config.treat, water: config.water, sleep: config.sleep, steps: config.steps, prizes: config.prizes, rulesText: config.rulesText, privacyText: config.privacyText, monthAwards: config.monthAwards || {} },
+    serverToday: today, appVersion: APP_VERSION, settings, finale: { revealed, revealAt }, config: { points: config.points, pointsVersion: config.pointsVersion, treat: config.treat, water: config.water, sleep: config.sleep, steps: config.steps, prizes: config.prizes, rulesText: config.rulesText, privacyText: config.privacyText, monthAwards: config.monthAwards || {} },
     me: publicAccount(viewer), participants, summaries: shared, results,
     myRecord: viewer.memberId ? records[viewer.memberId] || (await getRecord(viewer.memberId)) : null,
     challenges: challenges.filter((c) => c.end >= addDays(t, -31)),

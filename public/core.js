@@ -172,6 +172,8 @@ const PROVITA_EQ = { provita: 1, provita2: 2, ryvita: 2, ricecake: 2 }; // 1 Ryv
 const portions = (f) => { const x = FOOD_BY_ID[f.foodId]; const n = x ? parseFloat(x.serving) : NaN; return (Number.isFinite(n) && n >= 1 && n <= 5 && !x.unit ? n : 1) * (f.qty || 1); };
 const MEAL_SLOT = { Breakfast: 1, "Meal 1": 1, Lunch: 2, "Meal 2": 2, Dinner: 3, "Meal 3": 3 }; // active minutes needed for the Move points (or reach the step goal)
 export const POINTS_VERSION = 2;
+// Bumped with every release. The server (same deploy) reports its version; a phone running an older copy reloads itself.
+export const APP_VERSION = "37";
 
 export const KCAL_PER_KG = 7700;
 

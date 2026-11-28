@@ -2,7 +2,7 @@
    Talks to the secure API in netlify/functions/api.mjs. Points, rankings and awards are calculated on the
    server with the same rules file (core.js) that this app uses for display. */
 import { FOODS, FOOD_BY_ID, CATEGORIES, SERVINGS, GRAM_CHIPS, foodKcal, searchFoods } from "./foods.js";
-import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER_WEEK, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, taskFor, BADGES, HOLIDAYS, MOODS, SLEEP_QUALITY, JOURNAL_CHECKS, KCAL_PER_KG, todaySA, addDays, diffDays, pad, dow, holiday, emptyRecord, normRecord } from "./core.js";
+import { APP_VERSION, makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER_WEEK, DEFAULT_SETTINGS, DEFAULT_CONFIG, AVATARS, DAILY_TASKS, taskFor, BADGES, HOLIDAYS, MOODS, SLEEP_QUALITY, JOURNAL_CHECKS, KCAL_PER_KG, todaySA, addDays, diffDays, pad, dow, holiday, emptyRecord, normRecord } from "./core.js";
 
 (() => {
   "use strict";
@@ -145,6 +145,11 @@ import { makeEngine, finaleTime, MOVE_MINUTES, PLANS, NOT_ALLOWED, WEIGH_MIN_PER
     return data;
   }
   function applyState(data) {
+    // A phone still running yesterday's copy of the app reloads once to pick up the new version.
+    if (data.appVersion && data.appVersion !== APP_VERSION) {
+      let tried = null; try { tried = sessionStorage.getItem("sbc_reload_for"); } catch {}
+      if (tried !== data.appVersion) { try { sessionStorage.setItem("sbc_reload_for", data.appVersion); } catch {} location.reload(); }
+    }
     state.settings = data.settings || null;
     state.config = data.config || null;
     if (data.config && data.config.points) { POINTS = { ...DEFAULT_CONFIG.points, ...data.config.points }; TREAT = { ...DEFAULT_CONFIG.treat, ...(data.config.treat || {}), bonus: POINTS.treatBonus }; }

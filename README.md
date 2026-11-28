@@ -57,6 +57,10 @@ Adding food: 1. meal, 2. time eaten, 3. tap a category, 4. choose the food from 
 * The latest message still shows on Home, with an "Open inbox" button.
 * People with reminders turned on also get a phone notification ("📣 Messages and announcements", on by default; it can be switched off under reminders). Tapping it opens the inbox.
 
+## 🔄 Automatic updates on phones
+
+* Every release has a version number (APP_VERSION in public/core.js, matched by the service worker cache name). When a phone that has the app open is still running an older copy, it reloads itself once to pick up the new version. Bump APP_VERSION with every release.
+
 ## ⭐ Junior easy check (under 18s)
 
 * Under 18s see "⭐ My day: tap one for each" on Home and on the Log tab instead of the detailed forms: 5 questions, one tap each, changeable all day.
